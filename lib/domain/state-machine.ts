@@ -57,14 +57,21 @@ const transitions: Record<StateMachineEntity, Record<string, readonly string[]>>
   },
   job: {
     created: ["queued", "cancelled"],
-    queued: ["claimed", "cancelled", "failed"],
-    claimed: ["running", "queued", "failed", "cancelled"],
-    running: ["verifying", "queued", "failed", "cancelled"],
-    verifying: ["succeeded", "failed", "uncertain"],
-    succeeded: [],
+    queued: ["claimed", "cancelled", "failed", "blocked"],
+    claimed: ["executing", "queued", "failed", "blocked", "cancelled"],
+    executing: ["provider_completed", "queued", "failed", "blocked", "cancelled"],
+    provider_completed: ["verifying", "failed", "blocked", "cancelled"],
+    verifying: ["verified", "failed", "blocked"],
+    verified: [],
     failed: ["queued"],
-    uncertain: [],
-    cancelled: []
+    blocked: ["queued", "cancelled"],
+    cancelled: [],
+
+    // Read/transition compatibility for records created before Tranche C.
+    // New code never emits these legacy states.
+    running: ["provider_completed", "queued", "failed", "blocked", "cancelled"],
+    succeeded: [],
+    uncertain: ["verifying", "blocked", "cancelled"]
   },
   outcome: {
     recorded: ["verified", "uncertain", "rejected"],

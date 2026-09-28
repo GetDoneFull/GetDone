@@ -10,6 +10,9 @@ import {
   type JobRecord,
   type JobStores
 } from "../../lib/domain/services/job-service";
+import { CoreTrancheCCoordinator } from "../../lib/domain/services/core-tranche-c-coordinator";
+import type { VerificationRequestRecord } from "../../lib/domain/services/verification-service";
+import { createObjectiveDesiredOutcome } from "../../lib/domain/objective-outcome";
 import {
   TaskService,
   type TaskRecord,
@@ -42,6 +45,8 @@ import { PostgresJobExecutionSpecStore } from "../../lib/persistence/postgres/jo
 import { PostgresBusinessActionExecutionStore } from "../../lib/persistence/postgres/execution-stores";
 import { PostgresJobVerificationEvidenceStore } from "../../lib/persistence/postgres/worker-runtime-stores";
 import {
+  createVerificationContract,
+  createVerificationEvidence,
   createVerificationRequest,
   resolveVerificationRequest,
   type VerificationEvidence
@@ -570,7 +575,8 @@ export async function createTaskJobAndExecute(
         undefined,
         {
           jobs,
-          verificationEvidence: new PostgresJobVerificationEvidenceStore(database)
+          verificationEvidence: new PostgresJobVerificationEvidenceStore(database),
+          lifecycle: jobService
         }
       ),
       jobs
@@ -578,21 +584,39 @@ export async function createTaskJobAndExecute(
 
     await runtime.enqueueAuthorizedBusinessAction(queuedJob, request);
     const result = await runtime.runOnce();
-    if (result[0]?.outcome.kind !== "succeeded") {
-      throw new Error("Safe staging integration did not succeed");
+    if (result[0]?.outcome.kind !== "provider-completed") {
+      throw new Error("Safe staging integration did not reach provider completion");
     }
 
-    const evidenceResult = await database.query<{ payload: VerificationEvidence }>(
+    const providerEvidenceResult = await database.query<{ payload: VerificationEvidence }>(
       `SELECT payload FROM business_action_verification_evidence
        WHERE job_id=$1 ORDER BY observed_at DESC LIMIT 1`,
       [jobId]
     );
-    const evidence = evidenceResult.rows[0]?.payload;
-    if (!evidence || evidence.result !== "pass") {
-      throw new Error("Safe staging integration verification evidence is missing");
+    const providerEvidence = providerEvidenceResult.rows[0]?.payload;
+    if (!providerEvidence || providerEvidence.result !== "pass") {
+      throw new Error("Safe staging provider-completion evidence is missing");
     }
 
-    const requestedAt = new Date(Date.parse(evidence.observedAt) - 1_000).toISOString();
+    const healthResponse = await fetch(baseURL + "/api/health", { cache: "no-store" });
+    const observedAt = new Date().toISOString();
+    const contract = createVerificationContract({
+      id: "browser-safe-http-current-state",
+      checks: [
+        {
+          id: "health-ok",
+          key: "health.ok",
+          operator: "truthy",
+          required: true
+        },
+        {
+          id: "application-responds",
+          key: "application.responds",
+          operator: "truthy",
+          required: true
+        }
+      ]
+    });
     const verification = createVerificationRequest({
       id: "verification-request-browser-safe-http",
       correlationId,
@@ -600,50 +624,124 @@ export async function createTaskJobAndExecute(
       companyId: STAGING_COMPANY_ID,
       environment: "staging",
       subject: { type: "job", id: jobId },
-      strategies: ["business"],
-      requestedAt,
-      expiresAt: new Date(Date.parse(evidence.observedAt) + 10 * 60_000).toISOString(),
+      strategies: ["system"],
+      contract,
+      requestedAt: new Date(Date.parse(observedAt) - 1_000).toISOString(),
+      expiresAt: new Date(Date.parse(observedAt) + 10 * 60_000).toISOString(),
       maxEvidenceAgeSeconds: 600,
-      requiresIndependentEvidence: false
+      requiresIndependentEvidence: true,
+      executionIndependenceKey: providerEvidence.independenceKey
     });
-    const receipt = resolveVerificationRequest(verification, [evidence], {
-      receiptId: "verification-receipt-browser-safe-http",
-      verifiedAt: new Date(Date.parse(evidence.observedAt) + 1).toISOString(),
-      receiptTtlSeconds: 600
+    const independentEvidence = createVerificationEvidence({
+      id: "verification-evidence-browser-safe-http",
+      correlationId,
+      portfolioId: STAGING_PORTFOLIO_ID,
+      companyId: STAGING_COMPANY_ID,
+      subject: verification.subject,
+      strategy: "system",
+      result: healthResponse.ok ? "pass" : "fail",
+      sourceType: "system-probe",
+      sourceId: "browser-safe-health-verifier",
+      independenceKey: "system-probe:browser-safe-health",
+      observedAt,
+      expiresAt: new Date(Date.parse(observedAt) + 5 * 60_000).toISOString(),
+      payloadHash: sha256Hex({
+        status: healthResponse.status,
+        ok: healthResponse.ok
+      }),
+      provenance: "browser-staging-independent-verifier",
+      observations: {
+        "health.ok": healthResponse.ok,
+        "application.responds": true
+      }
     });
-    if (receipt.verdict !== "verified") {
-      throw new Error("Safe staging integration verification did not resolve verified");
-    }
-    await new PostgresVerificationReceiptStore(database).insert(receipt);
 
-    let authoritative = await jobs.get(jobId);
-    if (!authoritative) throw new Error("Authoritative Job disappeared");
-    for (const state of ["claimed", "running", "verifying"] as const) {
-      const next: JobRecord = Object.freeze({
-        ...authoritative,
-        state,
-        version: authoritative.version + 1,
-        updatedAt: new Date().toISOString()
-      });
-      await jobs.save(next, authoritative.version);
-      authoritative = next;
-    }
-    const completed: JobRecord = Object.freeze({
-      ...authoritative,
-      state: "succeeded",
-      verificationEvidenceIds: Object.freeze([...receipt.evidenceIds]),
-      verificationReceiptId: receipt.id,
-      verificationReceiptHash: receipt.receiptHash,
-      version: authoritative.version + 1,
-      updatedAt: new Date().toISOString()
+    const receiptStore = new PostgresVerificationReceiptStore(database);
+    const verificationLifecycle = {
+      request: async () => ({
+        id: verification.id,
+        correlationId,
+        portfolioId: STAGING_PORTFOLIO_ID,
+        companyId: STAGING_COMPANY_ID,
+        state: "requested",
+        request: verification,
+        version: 1,
+        updatedAt: verification.requestedAt
+      } as VerificationRequestRecord),
+      beginCollecting: async () => ({
+        id: verification.id,
+        correlationId,
+        portfolioId: STAGING_PORTFOLIO_ID,
+        companyId: STAGING_COMPANY_ID,
+        state: "collecting",
+        request: verification,
+        version: 2,
+        updatedAt: observedAt
+      } as VerificationRequestRecord),
+      resolve: async (
+        _id: string,
+        _command: unknown,
+        requestToResolve: typeof verification,
+        evidenceToResolve: readonly VerificationEvidence[],
+        receiptInput: {
+          receiptId: string;
+          verifiedAt?: string;
+          receiptTtlSeconds?: number;
+        }
+      ) => {
+        const receipt = resolveVerificationRequest(
+          requestToResolve,
+          evidenceToResolve,
+          receiptInput
+        );
+        await receiptStore.insert(receipt);
+        return {
+          id: verification.id,
+          correlationId,
+          portfolioId: STAGING_PORTFOLIO_ID,
+          companyId: STAGING_COMPANY_ID,
+          state: receipt.verdict,
+          request: verification,
+          receipt,
+          version: 3,
+          updatedAt: receipt.verifiedAt
+        } as VerificationRequestRecord;
+      }
+    };
+
+    const coordinator = new CoreTrancheCCoordinator(
+      jobService,
+      verificationLifecycle as never
+    );
+    const closed = await coordinator.closeExecutionLoop({
+      actor: { type: "system", id: "browser-staging-control-plane" },
+      scope: stagingScope,
+      correlationId,
+      provenance: "browser-staging-gate-c",
+      idempotencyRoot: `browser-gate-c:${jobId}`
+    }, {
+      jobId,
+      verificationRequest: verification,
+      evidence: [independentEvidence],
+      desiredOutcome: createObjectiveDesiredOutcome({
+        objectiveId: "objective-browser-safe-http",
+        contract
+      }),
+      canGenerateMoreWork: true
     });
-    await jobs.save(completed, authoritative.version);
+    if (
+      closed.job.state !== "verified"
+      || closed.verification.receipt?.verdict !== "verified"
+      || closed.objectiveEvaluation.state !== "completed"
+    ) {
+      throw new Error("Safe staging integration did not reach verified Objective completion");
+    }
 
     return {
       taskId,
       jobId,
-      evidenceId: evidence.id,
-      receiptId: receipt.id
+      evidenceId: independentEvidence.id,
+      receiptId: closed.verification.receipt.id
     };
   } finally {
     await database.close();

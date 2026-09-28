@@ -2,7 +2,7 @@ import { ControlPlaneError } from "@/lib/control-plane/errors";
 import { sha256Hex } from "@/lib/control-plane/canonical-hash";
 import type { TrustedExecutionScope } from "@/lib/control-plane/trusted-execution-scope";
 
-export const JOB_RUNTIME_CONTRACT_VERSION = "1.2.0";
+export const JOB_RUNTIME_CONTRACT_VERSION = "1.3.0";
 
 export interface JobQueueEnvelope {
   id: string;
@@ -18,6 +18,8 @@ export interface JobQueueEnvelope {
 }
 
 export type JobLeaseState = "active" | "released" | "expired";
+
+export type DurableJobCompletionKind = "provider-completed" | "verified";
 
 export interface DurableJobLease {
   id: string;
@@ -141,6 +143,7 @@ export interface DurableJobStore {
     expectedJobVersion: number;
     expectedJobHash: string;
     idempotencyKey: string;
+    outcomeKind: DurableJobCompletionKind;
   }): Promise<JobStoreTransactionReceipt>;
   scheduleRetry(record: JobRetryScheduleRecord): Promise<JobStoreTransactionReceipt>;
   deadLetter(record: DeadLetterRecord): Promise<JobStoreTransactionReceipt>;

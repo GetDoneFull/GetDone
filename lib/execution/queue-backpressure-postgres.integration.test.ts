@@ -146,7 +146,7 @@ integrationDescribe("queue saturation and backpressure", () => {
         if (active === 2) twoStartedResolve();
         await release;
         active -= 1;
-        return { kind: "succeeded" };
+        return { kind: "provider-completed" };
       }
     });
 

@@ -242,7 +242,8 @@ describe("PostgresDurableJobStore", () => {
       now: "2026-09-21T04:00:15Z",
       expectedJobVersion: 2,
       expectedJobHash: "claimed-hash",
-      idempotencyKey: "release-1"
+      idempotencyKey: "release-1",
+      outcomeKind: "provider-completed"
     });
     expect(receipt.operation).toBe("release");
     expect(db.calls.some((call) => call.includes("runtime_state='released'"))).toBe(true);
@@ -416,7 +417,8 @@ describe("PostgresDurableJobStore", () => {
       now: "2026-09-21T04:00:15Z",
       expectedJobVersion: 2,
       expectedJobHash: "claimed-hash",
-      idempotencyKey: "release-bad"
+      idempotencyKey: "release-bad",
+      outcomeKind: "provider-completed"
     })).rejects.toThrow(/release lost/i);
 
     const badReleaseLease = new PostgresDurableJobStore(new ScriptedDb([
@@ -428,7 +430,8 @@ describe("PostgresDurableJobStore", () => {
       now: "2026-09-21T04:00:15Z",
       expectedJobVersion: 2,
       expectedJobHash: "claimed-hash",
-      idempotencyKey: "release-stale"
+      idempotencyKey: "release-stale",
+      outcomeKind: "provider-completed"
     })).rejects.toThrow(/lease is stale/i);
   });
 

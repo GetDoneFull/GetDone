@@ -169,6 +169,7 @@ class FakeWorkStore implements DurableJobWorkStore {
     expectedJobVersion: number;
     expectedJobHash: string;
     idempotencyKey: string;
+    outcomeKind: "provider-completed" | "verified";
   }) {
     this.state = "released";
     return this.receipt("release", input.idempotencyKey, input.now);
@@ -220,14 +221,23 @@ function worker(store: FakeWorkStore, maxAttempts = 5) {
 }
 
 describe("DurableJobWorker", () => {
-  it("claims and releases a successful Job", async () => {
+  it("claims and releases a provider-completed Job without declaring it verified", async () => {
     const store = new FakeWorkStore();
     const results = await worker(store).runOnce({
-      execute: async () => ({ kind: "succeeded" })
+      execute: async () => ({ kind: "provider-completed" })
     });
-    expect(results).toEqual([{ jobId: "job-1", outcome: { kind: "succeeded" } }]);
+    expect(results).toEqual([{ jobId: "job-1", outcome: { kind: "provider-completed" } }]);
     expect(store.state).toBe("released");
     expect(store.attempt).toBe(1);
+  });
+
+  it("releases a lease for an explicitly verified outcome", async () => {
+    const store = new FakeWorkStore();
+    const results = await worker(store).runOnce({
+      execute: async () => ({ kind: "verified" })
+    });
+    expect(results).toEqual([{ jobId: "job-1", outcome: { kind: "verified" } }]);
+    expect(store.state).toBe("released");
   });
 
   it("retries PostgreSQL serialization conflicts with the same durable transition", async () => {
@@ -249,12 +259,12 @@ describe("DurableJobWorker", () => {
 
     const store = new SerializationConflictStore();
     const results = await worker(store).runOnce({
-      execute: async () => ({ kind: "succeeded" })
+      execute: async () => ({ kind: "provider-completed" })
     });
 
     expect(store.releaseAttempts).toBe(2);
     expect(store.state).toBe("released");
-    expect(results).toEqual([{ jobId: "job-1", outcome: { kind: "succeeded" } }]);
+    expect(results).toEqual([{ jobId: "job-1", outcome: { kind: "provider-completed" } }]);
   });
 
   it("renews the lease when execution asks for a heartbeat", async () => {
@@ -263,7 +273,7 @@ describe("DurableJobWorker", () => {
       execute: async (context) => {
         await context.heartbeat();
         expect(context.runtimeVersion()).toBeGreaterThan(2);
-        return { kind: "succeeded" };
+        return { kind: "provider-completed" };
       }
     };
     await worker(store).runOnce(handler);
@@ -305,7 +315,7 @@ describe("DurableJobWorker", () => {
           expectedJobHash: context.runtimeHash(),
           idempotencyKey: "cancel-race"
         });
-        return { kind: "succeeded" };
+        return { kind: "provider-completed" };
       }
     });
     expect(results).toEqual([{
@@ -336,7 +346,7 @@ describe("DurableJobWorker", () => {
     const results = await worker(store).runOnce({
       execute: async () => {
         draining = true;
-        return { kind: "succeeded" };
+        return { kind: "provider-completed" };
       }
     }, {
       shouldStop: () => draining

@@ -4,12 +4,15 @@ import { assertTransition, canTransition, createTransitionRecord } from "@/lib/d
 describe("authoritative state transitions", () => {
   it("allows configured transitions", () => {
     expect(canTransition("decision", "pending", "approved")).toBe(true);
-    expect(canTransition("job", "running", "verifying")).toBe(true);
+    expect(canTransition("job", "executing", "provider_completed")).toBe(true);
+    expect(canTransition("job", "provider_completed", "verifying")).toBe(true);
+    expect(canTransition("job", "verifying", "verified")).toBe(true);
   });
 
   it("fails closed on invalid transitions", () => {
     expect(() => assertTransition("decision", "approved", "pending")).toThrow();
-    expect(() => assertTransition("job", "created", "succeeded")).toThrow();
+    expect(() => assertTransition("job", "created", "verified")).toThrow();
+    expect(() => assertTransition("job", "provider_completed", "verified")).toThrow();
   });
 
   it("records actor and scope when transitioning", () => {

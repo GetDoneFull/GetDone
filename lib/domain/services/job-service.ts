@@ -32,12 +32,17 @@ export type JobState =
   | "created"
   | "queued"
   | "claimed"
-  | "running"
+  | "executing"
+  | "provider_completed"
   | "verifying"
-  | "succeeded"
+  | "verified"
   | "failed"
-  | "uncertain"
-  | "cancelled";
+  | "blocked"
+  | "cancelled"
+  // Legacy persisted states are read-compatible only. New transitions do not emit them.
+  | "running"
+  | "succeeded"
+  | "uncertain";
 
 export interface JobRecord extends StatefulEntity {
   state: JobState;
@@ -61,6 +66,9 @@ export interface JobRecord extends StatefulEntity {
   verifiedRunningPlacementHash?: string;
   verifiedCompletionFactId?: string;
   verifiedCompletionFactHash?: string;
+  providerResultId?: string;
+  providerResultHash?: string;
+  providerCompletedAt?: string;
   failureReason?: string;
 }
 
@@ -93,7 +101,7 @@ async function assertJobDependenciesReady(store: EntityStore<JobRecord>, current
       !dependency
       || dependency.portfolioId !== current.portfolioId
       || dependency.companyId !== current.companyId
-      || dependency.state !== "succeeded"
+      || !["verified", "succeeded"].includes(dependency.state)
     ) {
       throw new ControlPlaneError(
         "CONFLICT",
@@ -344,7 +352,10 @@ export class JobService {
         verifiedRunningPlacementId: undefined,
         verifiedRunningPlacementHash: undefined,
         verifiedCompletionFactId: undefined,
-        verifiedCompletionFactHash: undefined
+        verifiedCompletionFactHash: undefined,
+        providerResultId: undefined,
+        providerResultHash: undefined,
+        providerCompletedAt: undefined
       }),
       metadata: () => ({ reason, retriedAt }),
       now: () => new Date(retriedAt)
@@ -383,10 +394,48 @@ export class JobService {
         verifiedRunningPlacementId: undefined,
         verifiedRunningPlacementHash: undefined,
         verifiedCompletionFactId: undefined,
-        verifiedCompletionFactHash: undefined
+        verifiedCompletionFactHash: undefined,
+        providerResultId: undefined,
+        providerResultHash: undefined,
+        providerCompletedAt: undefined
       }),
       metadata: () => ({ timedOutAt }),
       now: () => new Date(timedOutAt)
+    });
+  }
+
+  startProviderExecution(
+    id: string,
+    command: AuthoritativeCommandEnvelope,
+    workerId: string
+  ) {
+    if (!workerId) {
+      throw new ControlPlaneError("VALIDATION_FAILED", "Worker identity is required");
+    }
+    return executeTransitionCommand({
+      manager: this.transactions,
+      selectStore: (stores) => stores.jobs,
+      entityType: "job",
+      entityId: id,
+      to: "executing",
+      command,
+      triggeringEvent: "job-provider-execution-started",
+      beforeTransition: (current) => {
+        if (current.workerId !== workerId) {
+          throw new ControlPlaneError(
+            "CONFLICT",
+            "Provider execution worker does not hold the authoritative Job claim"
+          );
+        }
+        if (!current.authorizationConsumption) {
+          throw new ControlPlaneError(
+            "FORBIDDEN",
+            "Provider execution requires inherited authoritative Task authorization"
+          );
+        }
+      },
+      metadata: () => ({ workerId }),
+      now: this.now
     });
   }
 
@@ -402,9 +451,9 @@ export class JobService {
       selectStore: (stores) => stores.jobs,
       entityType: "job",
       entityId: id,
-      to: "running",
+      to: "executing",
       command,
-      triggeringEvent: "job-started-from-verified-resource-start",
+      triggeringEvent: "job-executing-from-verified-resource-start",
       beforeTransition: async (current, transaction) => {
         if (!current.workerId) {
           throw new ControlPlaneError(
@@ -460,37 +509,57 @@ export class JobService {
     });
   }
 
-  beginVerification(
+  recordProviderCompletion(
     id: string,
     command: AuthoritativeCommandEnvelope,
-    verifiedCompletionFactId: string
+    input: {
+      providerResultId: string;
+      providerResultHash: string;
+      completedAt?: string;
+      verifiedCompletionFactId?: string;
+    }
   ) {
+    if (!input.providerResultId || !input.providerResultHash) {
+      throw new ControlPlaneError(
+        "VALIDATION_FAILED",
+        "Provider completion requires a durable provider result id and hash"
+      );
+    }
+
     let completionFact: JobVerifiedCompletionFact | undefined;
+    const completedAt = input.completedAt ?? this.now().toISOString();
 
     return executeTransitionCommand({
       manager: this.transactions,
       selectStore: (stores) => stores.jobs,
       entityType: "job",
       entityId: id,
-      to: "verifying",
+      to: "provider_completed",
       command,
-      triggeringEvent: "job-verification-started-from-verified-resource-completion",
+      triggeringEvent: "job-provider-completed",
       beforeTransition: async (current, transaction) => {
-        if (!current.verifiedRunningPlacementId || !current.verifiedRunningPlacementHash) {
+        if (!current.workerId) {
           throw new ControlPlaneError(
-            "FORBIDDEN",
-            "Job verification cannot begin without verified running-placement lineage"
+            "CONFLICT",
+            "Provider completion requires an executing Job with an authoritative worker claim"
           );
         }
 
+        if (!input.verifiedCompletionFactId) return;
+        if (!current.verifiedRunningPlacementId || !current.verifiedRunningPlacementHash) {
+          throw new ControlPlaneError(
+            "FORBIDDEN",
+            "Verified resource completion requires verified running-placement lineage"
+          );
+        }
         const bridge = transaction.stores.executionBridge;
         if (!bridge) {
           throw new ControlPlaneError(
             "UNAVAILABLE",
-            "Authoritative verified-completion bridge storage is required before Job verification"
+            "Authoritative verified-completion bridge storage is unavailable"
           );
         }
-        const persisted = await bridge.getCompletionFact(verifiedCompletionFactId);
+        const persisted = await bridge.getCompletionFact(input.verifiedCompletionFactId);
         if (!persisted) {
           throw new ControlPlaneError(
             "NOT_FOUND",
@@ -505,26 +574,46 @@ export class JobService {
           now: this.now().getTime()
         });
       },
-      patch: () => {
-        if (!completionFact) {
-          throw new ControlPlaneError(
-            "FORBIDDEN",
-            "Verified resource-completion authority is unavailable"
-          );
-        }
-        return {
+      patch: () => ({
+        providerResultId: input.providerResultId,
+        providerResultHash: input.providerResultHash,
+        providerCompletedAt: completedAt,
+        ...(completionFact ? {
           verifiedCompletionFactId: completionFact.id,
           verifiedCompletionFactHash: completionFact.factHash
-        };
-      },
+        } : {})
+      }),
       metadata: () => ({
-        verifiedCompletionFactId,
-        verifiedCompletionFactHash: completionFact?.factHash ?? null
-      })
+        providerResultId: input.providerResultId,
+        providerResultHash: input.providerResultHash,
+        verifiedCompletionFactId: completionFact?.id ?? null
+      }),
+      now: () => new Date(completedAt)
     });
   }
 
-  succeed(
+  beginVerification(id: string, command: AuthoritativeCommandEnvelope) {
+    return executeTransitionCommand({
+      manager: this.transactions,
+      selectStore: (stores) => stores.jobs,
+      entityType: "job",
+      entityId: id,
+      to: "verifying",
+      command,
+      triggeringEvent: "job-verification-started",
+      beforeTransition: (current) => {
+        if (!current.providerResultId || !current.providerResultHash || !current.providerCompletedAt) {
+          throw new ControlPlaneError(
+            "FORBIDDEN",
+            "Job verification requires persisted provider-completion lineage"
+          );
+        }
+      },
+      now: this.now
+    });
+  }
+
+  verify(
     id: string,
     command: AuthoritativeCommandEnvelope,
     receiptId: string
@@ -536,9 +625,9 @@ export class JobService {
       selectStore: (stores) => stores.jobs,
       entityType: "job",
       entityId: id,
-      to: "succeeded",
+      to: "verified",
       command,
-      triggeringEvent: "job-verified-succeeded",
+      triggeringEvent: "job-verified",
       beforeTransition: async (_current, transaction) => {
         const store = transaction.stores.verificationReceipts;
         if (!store) {
@@ -571,6 +660,14 @@ export class JobService {
     });
   }
 
+  succeed(
+    id: string,
+    command: AuthoritativeCommandEnvelope,
+    receiptId: string
+  ) {
+    return this.verify(id, command, receiptId);
+  }
+
   markUncertain(
     id: string,
     command: AuthoritativeCommandEnvelope,
@@ -583,9 +680,9 @@ export class JobService {
       selectStore: (stores) => stores.jobs,
       entityType: "job",
       entityId: id,
-      to: "uncertain",
+      to: "blocked",
       command,
-      triggeringEvent: "job-verification-uncertain",
+      triggeringEvent: "job-verification-blocked",
       beforeTransition: async (_current, transaction) => {
         const store = transaction.stores.verificationReceipts;
         if (!store) {
@@ -611,9 +708,53 @@ export class JobService {
         return {
           verificationEvidenceIds: [...receipt.evidenceIds],
           verificationReceiptId: receipt.id,
-          verificationReceiptHash: receipt.receiptHash
+          verificationReceiptHash: receipt.receiptHash,
+          failureReason: "Verification is uncertain; additional evidence or owner input is required"
         };
       },
+      metadata: () => ({ verificationReceiptId: receiptId })
+    });
+  }
+
+  failVerification(
+    id: string,
+    command: AuthoritativeCommandEnvelope,
+    receiptId: string,
+    failureReason: string
+  ) {
+    if (!failureReason) {
+      throw new ControlPlaneError("VALIDATION_FAILED", "Verification failure requires a reason");
+    }
+    let receipt: VerificationReceipt | undefined;
+    return executeTransitionCommand({
+      manager: this.transactions,
+      selectStore: (stores) => stores.jobs,
+      entityType: "job",
+      entityId: id,
+      to: "failed",
+      command,
+      triggeringEvent: "job-verification-failed",
+      beforeTransition: async (_current, transaction) => {
+        const store = transaction.stores.verificationReceipts;
+        if (!store) {
+          throw new ControlPlaneError(
+            "UNAVAILABLE",
+            "Authoritative verification receipt storage is required for verification failure"
+          );
+        }
+        receipt = await requireAuthoritativeVerificationReceipt(store, receiptId, {
+          scope: command.scope,
+          subject: { type: "job", id },
+          now: this.now().getTime(),
+          allowedVerdicts: ["failed"]
+        });
+      },
+      patch: () => ({
+        failureReason,
+        verificationEvidenceIds: [...(receipt?.evidenceIds ?? [])],
+        verificationReceiptId: receipt?.id,
+        verificationReceiptHash: receipt?.receiptHash
+      }),
       metadata: () => ({ verificationReceiptId: receiptId })
     });
   }
@@ -630,6 +771,14 @@ export class JobService {
       to: "failed",
       command,
       triggeringEvent: "job-failed",
+      beforeTransition: (current) => {
+        if (current.state === "verifying") {
+          throw new ControlPlaneError(
+            "FORBIDDEN",
+            "Verification failure must be backed by an authoritative failed verification receipt"
+          );
+        }
+      },
       patch: () => ({ failureReason })
     });
   }

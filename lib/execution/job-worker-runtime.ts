@@ -13,7 +13,8 @@ import type {
 import { getTelemetry, OTEL_SEMANTIC } from "@/lib/observability/telemetry";
 
 export type JobExecutionOutcome =
-  | { kind: "succeeded" }
+  | { kind: "provider-completed" }
+  | { kind: "verified" }
   | { kind: "retry"; reason: string; delayMs?: number }
   | { kind: "dead-letter"; reason: string }
   | { kind: "cancelled"; reason: string };
@@ -297,13 +298,14 @@ export class DurableJobWorker {
       }
     );
 
-    if (outcome.kind === "succeeded") {
+    if (outcome.kind === "provider-completed" || outcome.kind === "verified") {
       const receipt = await this.retrySerializableConflict(() => this.store.release({
         lease,
         now: this.now().toISOString(),
         expectedJobVersion: version,
         expectedJobHash: stateHash,
-        idempotencyKey: `release:${lease.id}:${lease.version}`
+        idempotencyKey: `release:${lease.id}:${lease.version}`,
+        outcomeKind: outcome.kind
       }));
       latestTransaction = receipt;
     } else if (outcome.kind === "cancelled") {

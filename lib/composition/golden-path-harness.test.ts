@@ -17,7 +17,8 @@ const expectedStages = [
   "credential-admission",
   "dispatch-admission",
   "start-verification",
-  "job-running",
+  "job-executing",
+  "provider-completed",
   "completion-verification",
   "outcome",
   "event-audit",
@@ -37,10 +38,10 @@ describe("cross-phase deterministic golden path", () => {
     expect(result.stages.every((item) => item.artifactHash.length === 64)).toBe(true);
 
     expect(result.final).toEqual({
-      jobState: "succeeded",
+      jobState: "verified",
       outcomeState: "verified",
       eventState: "processed",
-      ownerVisibleJobState: "succeeded",
+      ownerVisibleJobState: "verified",
       auditEventCount: 4,
       memoryAuthority: "advisory",
       reservationState: "released",
@@ -74,7 +75,8 @@ describe("cross-phase deterministic golden path", () => {
       "job",
       "dispatch-admission",
       "start-verification",
-      "job-running",
+      "job-executing",
+      "provider-completed",
       "completion-verification",
       "outcome",
       "event-audit",
@@ -86,15 +88,15 @@ describe("cross-phase deterministic golden path", () => {
     }
   });
 
-  it("places Job running only after independent resource-start verification", async () => {
+  it("places Job execution only after independent resource-start verification", async () => {
     const result = await runDeterministicGoldenPath();
     const dispatchIndex = result.stages.findIndex((item) => item.name === "dispatch-admission");
     const startIndex = result.stages.findIndex((item) => item.name === "start-verification");
-    const runningIndex = result.stages.findIndex((item) => item.name === "job-running");
+    const executingIndex = result.stages.findIndex((item) => item.name === "job-executing");
 
     expect(dispatchIndex).toBeGreaterThan(-1);
     expect(startIndex).toBeGreaterThan(dispatchIndex);
-    expect(runningIndex).toBeGreaterThan(startIndex);
+    expect(executingIndex).toBeGreaterThan(startIndex);
   });
 
   it("does not release capacity before authoritative completion and outcome truth", async () => {

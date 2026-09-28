@@ -293,7 +293,7 @@ describeIntegration("disaster recovery from real PostgreSQL backup", () => {
       const results = await restartedWorker.runOnce({
         execute: async ({ envelope }) => {
           executed.push(envelope.jobId);
-          return { kind: "succeeded" };
+          return { kind: "provider-completed" };
         }
       });
       expect(results.map((item) => item.jobId).sort()).toEqual([safeProvider,safeQueued].sort());

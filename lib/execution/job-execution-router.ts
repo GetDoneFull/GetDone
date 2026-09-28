@@ -1,7 +1,8 @@
 import { sha256Hex } from "@/lib/control-plane/canonical-hash";
+import { createCommandEnvelope } from "@/lib/control-plane/command-envelope";
 import { ControlPlaneError } from "@/lib/control-plane/errors";
 import { assertTrustedExecutionScopeEqual } from "@/lib/control-plane/trusted-execution-scope";
-import type { JobRecord } from "@/lib/domain/services/job-service";
+import type { JobRecord, JobService } from "@/lib/domain/services/job-service";
 import type { AuthorizedBusinessActionRequest } from "@/lib/execution/adapters/business-action";
 import type { BusinessActionExecutionOrchestrator } from "@/lib/execution/business-action-orchestrator";
 import type {
@@ -18,7 +19,7 @@ import type { SoftwareWorkerRuntime } from "@/lib/execution/software-worker-runt
 import type { JobVerificationEvidenceStore } from "@/lib/persistence/postgres/worker-runtime-stores";
 import { runWithPostgresTenantScope } from "@/lib/persistence/postgres/tenant-context.server";
 
-export const JOB_EXECUTION_ROUTER_VERSION = "1.1.0";
+export const JOB_EXECUTION_ROUTER_VERSION = "1.2.0";
 
 export type JobExecutionSpec =
   | {
@@ -101,8 +102,45 @@ export class RoutedJobExecutionHandler implements DurableJobExecutionHandler {
     private readonly authority?: {
       jobs: AuthoritativeJobReadStore;
       verificationEvidence: JobVerificationEvidenceStore;
+      lifecycle: Pick<
+        JobService,
+        | "claim"
+        | "startProviderExecution"
+        | "recordProviderCompletion"
+        | "retry"
+        | "recoverTimeout"
+        | "fail"
+        | "cancel"
+      >;
     }
   ) {}
+
+  private lifecycleCommand(
+    context: DurableJobExecutionContext,
+    operation: string,
+    details: Readonly<Record<string, unknown>> = {}
+  ) {
+    const idempotencyKey = [
+      "job-lifecycle",
+      context.envelope.jobId,
+      String(context.lease.attempt),
+      operation
+    ].join(":");
+    return createCommandEnvelope({
+      commandId: idempotencyKey,
+      actor: { type: "worker", id: context.lease.workerId },
+      scope: context.envelope.scope,
+      correlationId: context.envelope.correlationId ?? context.envelope.id,
+      environment: context.envelope.scope.environment,
+      idempotencyKey,
+      provenance: "durable-job-worker",
+      requestedMutation: {
+        operation,
+        durableAttempt: context.lease.attempt,
+        ...details
+      }
+    });
+  }
 
   private async validateBusinessAuthority(
     context: DurableJobExecutionContext,
@@ -130,6 +168,40 @@ export class RoutedJobExecutionHandler implements DurableJobExecutionHandler {
     if (authoritative.state === "cancelled") {
       return { kind: "cancelled", reason: "Authoritative Job was cancelled before execution" };
     }
+    if (authoritative.state === "verified" || authoritative.state === "succeeded") {
+      return { kind: "verified" };
+    }
+    if (authoritative.state === "provider_completed") {
+      return { kind: "provider-completed" };
+    }
+
+    if (
+      ["claimed", "executing", "running"].includes(authoritative.state)
+      && authoritative.attempt < context.lease.attempt
+    ) {
+      try {
+        authoritative = await this.authority.lifecycle.recoverTimeout(
+          authoritative.id,
+          this.lifecycleCommand(context, "recover-timeout"),
+          new Date().toISOString()
+        );
+      } catch {
+        try {
+          await this.authority.lifecycle.fail(
+            authoritative.id,
+            this.lifecycleCommand(context, "timeout-attempts-exhausted"),
+            "Execution lease expired and the authoritative retry limit is exhausted"
+          );
+        } catch {
+          // The failure transition is best-effort here; the durable dead letter remains authoritative runtime evidence.
+        }
+        return {
+          kind: "dead-letter",
+          reason: "Authoritative Job could not recover an expired execution claim"
+        };
+      }
+    }
+
     if (authoritative.state !== "queued") {
       return {
         kind: "dead-letter",
@@ -137,10 +209,19 @@ export class RoutedJobExecutionHandler implements DurableJobExecutionHandler {
       };
     }
     if (
-      authoritative.version !== spec.authoritativeJobVersion
-      || sha256Hex(authoritative) !== spec.authoritativeJobHash
+      authoritative.attempt === 0
+      && (
+        authoritative.version !== spec.authoritativeJobVersion
+        || sha256Hex(authoritative) !== spec.authoritativeJobHash
+      )
     ) {
       return { kind: "dead-letter", reason: "Authoritative Job snapshot is stale" };
+    }
+    if (authoritative.attempt + 1 !== context.lease.attempt) {
+      return {
+        kind: "dead-letter",
+        reason: "Durable worker attempt does not match authoritative Job attempt lineage"
+      };
     }
 
     try {
@@ -204,7 +285,40 @@ export class RoutedJobExecutionHandler implements DurableJobExecutionHandler {
         const authorityFailure = await this.validateBusinessAuthority(context, spec);
         if (authorityFailure) return authorityFailure;
 
-        const result = await this.business.execute(spec.request);
+        const claimed = await this.authority!.lifecycle.claim(
+          spec.jobId,
+          this.lifecycleCommand(context, "claim"),
+          context.lease.workerId
+        );
+        const executing = await this.authority!.lifecycle.startProviderExecution(
+          spec.jobId,
+          this.lifecycleCommand(context, "start-provider-execution"),
+          context.lease.workerId
+        );
+
+        let result;
+        try {
+          result = await this.business.execute(spec.request);
+        } catch (error) {
+          const reason = error instanceof Error
+            ? `Provider execution threw before completion: ${error.message}`
+            : "Provider execution threw before completion";
+          if (executing.attempt >= (executing.maxAttempts ?? 5)) {
+            await this.authority!.lifecycle.fail(
+              spec.jobId,
+              this.lifecycleCommand(context, "provider-exception-terminal"),
+              reason
+            );
+            return { kind: "dead-letter", reason };
+          }
+          await this.authority!.lifecycle.retry(
+            spec.jobId,
+            this.lifecycleCommand(context, "provider-exception-retry"),
+            reason
+          );
+          return { kind: "retry", reason };
+        }
+
         if (result.verificationEvidence) {
           await this.authority!.verificationEvidence.put(
             spec.jobId,
@@ -216,40 +330,94 @@ export class RoutedJobExecutionHandler implements DurableJobExecutionHandler {
         switch (result.record.state) {
           case "completed":
             if (!result.verificationEvidence) {
+              await this.authority!.lifecycle.fail(
+                spec.jobId,
+                this.lifecycleCommand(context, "provider-completed-without-evidence"),
+                "Completed provider action did not produce verification evidence"
+              );
               return {
                 kind: "dead-letter",
                 reason: "Completed business action did not produce verification evidence"
               };
             }
-            return { kind: "succeeded" };
+            await this.authority!.lifecycle.recordProviderCompletion(
+              spec.jobId,
+              this.lifecycleCommand(context, "provider-completed", {
+                providerResultHash: result.record.recordHash
+              }),
+              {
+                providerResultId: result.record.providerOperationId ?? result.record.requestId,
+                providerResultHash: result.record.recordHash,
+                completedAt: result.record.updatedAt
+              }
+            );
+            return { kind: "provider-completed" };
           case "cancelled":
+            await this.authority!.lifecycle.cancel(
+              spec.jobId,
+              this.lifecycleCommand(context, "provider-cancelled")
+            );
             return { kind: "cancelled", reason: "Provider operation was cancelled" };
           case "rejected":
+            await this.authority!.lifecycle.fail(
+              spec.jobId,
+              this.lifecycleCommand(context, "provider-rejected"),
+              "Provider rejected the authorized action"
+            );
             return { kind: "dead-letter", reason: "Provider rejected the authorized action" };
-          case "failed":
-            return result.record.retryable
-              ? { kind: "retry", reason: "Provider reported retryable action failure" }
-              : { kind: "dead-letter", reason: "Provider reported terminal action failure" };
-          default:
-            return {
-              kind: "retry",
-              reason: "Provider operation is still pending",
-              delayMs: 2_000
-            };
+          case "failed": {
+            const reason = result.record.retryable
+              ? "Provider reported retryable action failure"
+              : "Provider reported terminal action failure";
+            if (result.record.retryable && claimed.attempt < (claimed.maxAttempts ?? 5)) {
+              await this.authority!.lifecycle.retry(
+                spec.jobId,
+                this.lifecycleCommand(context, "provider-failed-retry"),
+                reason
+              );
+              return { kind: "retry", reason };
+            }
+            await this.authority!.lifecycle.fail(
+              spec.jobId,
+              this.lifecycleCommand(context, "provider-failed-terminal"),
+              reason
+            );
+            return { kind: "dead-letter", reason };
+          }
+          default: {
+            const reason = "Provider operation is still pending";
+            if (claimed.attempt >= (claimed.maxAttempts ?? 5)) {
+              await this.authority!.lifecycle.fail(
+                spec.jobId,
+                this.lifecycleCommand(context, "provider-pending-terminal"),
+                "Provider did not reach completion before the authoritative attempt limit"
+              );
+              return {
+                kind: "dead-letter",
+                reason: "Provider did not reach completion before the authoritative attempt limit"
+              };
+            }
+            await this.authority!.lifecycle.retry(
+              spec.jobId,
+              this.lifecycleCommand(context, "provider-pending-retry"),
+              reason
+            );
+            return { kind: "retry", reason, delayMs: 2_000 };
+          }
         }
       }
       case "software-prepare": {
         if (!this.software) return { kind: "dead-letter", reason: "Software executor is not installed" };
         const runtime = await this.software.prepare(spec.plan);
         return runtime.pipeline.state === "awaiting-production-approval"
-          ? { kind: "succeeded" }
+          ? { kind: "provider-completed" }
           : { kind: "retry", reason: `Software preparation paused at ${runtime.pipeline.state}` };
       }
       case "software-deploy": {
         if (!this.software) return { kind: "dead-letter", reason: "Software executor is not installed" };
         const result = await this.software.deployProduction(spec.plan, spec.promotion);
         return result.runtime.pipeline.state === "post-deploy-verifying"
-          ? { kind: "succeeded" }
+          ? { kind: "provider-completed" }
           : { kind: "retry", reason: "Software deployment did not reach verification handoff" };
       }
       case "software-verify": {
@@ -259,14 +427,14 @@ export class RoutedJobExecutionHandler implements DurableJobExecutionHandler {
           spec.verification
         );
         return runtime.pipeline.state === "succeeded"
-          ? { kind: "succeeded" }
-          : { kind: "dead-letter", reason: "Software verification failed to establish success" };
+          ? { kind: "verified" }
+          : { kind: "dead-letter", reason: "Software verification failed to establish verified state" };
       }
       case "software-rollback": {
         if (!this.software) return { kind: "dead-letter", reason: "Software executor is not installed" };
         const runtime = await this.software.rollback(spec.plan);
         return runtime.pipeline.state === "rolled-back"
-          ? { kind: "succeeded" }
+          ? { kind: "provider-completed" }
           : { kind: "dead-letter", reason: "Software rollback did not reach terminal state" };
       }
     }

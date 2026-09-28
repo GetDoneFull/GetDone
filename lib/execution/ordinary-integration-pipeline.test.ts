@@ -245,6 +245,22 @@ describe("ordinary integration governed Job pipeline exit gate", () => {
       }
     );
 
+    const transitionJob = (
+      jobId: string,
+      state: JobRecord["state"],
+      patch: Partial<JobRecord> = {}
+    ) => {
+      const current = jobs.get(jobId)!;
+      const next: JobRecord = {
+        ...current,
+        ...patch,
+        state,
+        version: current.version + 1
+      };
+      jobs.set(jobId, next);
+      return next;
+    };
+
     const handler = new RoutedJobExecutionHandler(
       { get: async (jobId) => specs.get(jobId) ?? null, put: async () => undefined },
       orchestrator,
@@ -256,6 +272,25 @@ describe("ordinary integration governed Job pipeline exit gate", () => {
             evidence.push(`${jobId}:${requestId}`);
           },
           get: async () => null
+        } as never,
+        lifecycle: {
+          claim: async (jobId: string, _command: unknown, workerId: string) =>
+            transitionJob(jobId, "claimed", {
+              workerId,
+              attempt: jobs.get(jobId)!.attempt + 1
+            }),
+          startProviderExecution: async (jobId: string) =>
+            transitionJob(jobId, "executing"),
+          recordProviderCompletion: async (jobId: string) =>
+            transitionJob(jobId, "provider_completed"),
+          retry: async (jobId: string) =>
+            transitionJob(jobId, "queued", { workerId: undefined }),
+          recoverTimeout: async (jobId: string) =>
+            transitionJob(jobId, "queued", { workerId: undefined }),
+          fail: async (jobId: string) =>
+            transitionJob(jobId, "failed"),
+          cancel: async (jobId: string) =>
+            transitionJob(jobId, "cancelled")
         } as never
       }
     );
@@ -290,10 +325,10 @@ describe("ordinary integration governed Job pipeline exit gate", () => {
     }
 
     expect(outcomes).toEqual([
-      { kind: "succeeded" },
-      { kind: "succeeded" },
-      { kind: "succeeded" },
-      { kind: "succeeded" }
+      { kind: "provider-completed" },
+      { kind: "provider-completed" },
+      { kind: "provider-completed" },
+      { kind: "provider-completed" }
     ]);
     expect(evidence).toEqual([
       "job-http:action-http",
