@@ -102,6 +102,54 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
           GETDONE_DB_SSL: "false"
 
+      - name: Run UFO orchestration persistence acceptance
+        run: npx vitest run lib/persistence/postgres/orchestration-store.integration.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+          GETDONE_DB_SSL: "false"
+          GETDONE_DB_RUNTIME_ROLE: getdone_tenant_runtime
+          GETDONE_POSTGRES_INTEGRATION: "true"
+
+      - name: Run UFO orchestration durable worker acceptance
+        run: npx vitest run lib/persistence/postgres/orchestration-worker-store.integration.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+          GETDONE_DB_SSL: "false"
+          GETDONE_DB_RUNTIME_ROLE: getdone_tenant_runtime
+          GETDONE_POSTGRES_INTEGRATION: "true"
+
+      - name: Run OwnerIntent orchestration admission acceptance
+        run: npx vitest run lib/persistence/postgres/owner-intent-orchestration.integration.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+          GETDONE_DB_SSL: "false"
+          GETDONE_DB_RUNTIME_ROLE: getdone_tenant_runtime
+          GETDONE_POSTGRES_INTEGRATION: "true"
+
+      - name: Run durable orchestration planning acceptance
+        run: npx vitest run lib/persistence/postgres/orchestration-planning.integration.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+          GETDONE_DB_SSL: "false"
+          GETDONE_DB_RUNTIME_ROLE: getdone_tenant_runtime
+          GETDONE_POSTGRES_INTEGRATION: "true"
+
+      - name: Run durable validation and policy acceptance
+        run: npx vitest run lib/persistence/postgres/orchestration-validation-policy.integration.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+          GETDONE_DB_SSL: "false"
+          GETDONE_DB_RUNTIME_ROLE: getdone_tenant_runtime
+          GETDONE_POSTGRES_INTEGRATION: "true"
+
+      - name: Run durable authorization acceptance
+        run: npx vitest run lib/persistence/postgres/orchestration-authorization.integration.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+          GETDONE_DB_SSL: "false"
+          GETDONE_DB_RUNTIME_ROLE: getdone_tenant_runtime
+          GETDONE_POSTGRES_INTEGRATION: "true"
+
       - name: Run PostgreSQL rate limit acceptance
         run: npx vitest run lib/security/rate-limit-postgres.integration.test.ts
         env:
