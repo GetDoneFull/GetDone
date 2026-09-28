@@ -284,6 +284,37 @@
         "lib/execution/adapters/analytics-ingestion.ts",
         "lib/persistence/postgres/analytics-ingestion-store.ts"
       ]
+    },
+    "orchestrationContract": {
+      "version": "1.2.0",
+      "sourcePath": "lib/orchestration/contracts.ts",
+      "contractTracked": true,
+      "contractSourcePaths": [
+        "lib/orchestration/contracts.ts"
+      ]
+    },
+    "orchestrationWorkerContract": {
+      "version": "1.1.0",
+      "sourcePath": "lib/orchestration/worker-contracts.ts",
+      "contractTracked": true,
+      "contractSourcePaths": [
+        "lib/orchestration/worker-contracts.ts",
+        "lib/orchestration/worker-runtime.ts",
+        "lib/orchestration/persistent-worker.server.ts",
+        "lib/orchestration/worker-process.server.ts",
+        "lib/persistence/postgres/orchestration-worker-store.ts",
+        "lib/persistence/postgres/orchestration-worker-registry.ts",
+        "lib/orchestration/runtime.server.ts",
+        "lib/orchestration/stage-router.ts"
+      ]
+    },
+    "orchestrationTaskJobMaterialization": {
+      "version": "1.0.0",
+      "sourcePath": "lib/orchestration/task-job-materialization.ts",
+      "contractTracked": true,
+      "contractSourcePaths": [
+        "lib/orchestration/task-job-materialization.ts"
+      ]
     }
   },
   "policy": {
@@ -629,7 +660,28 @@
     "lib/analytics/ingestion.ts",
     "lib/analytics/analytics-ingestion-postgres.integration.test.ts",
     "lib/persistence/postgres/analytics-ingestion-store.ts",
-    "migrations/2026-09-25.3_analytics_ingestion.sql"
+    "migrations/2026-09-25.3_analytics_ingestion.sql",
+    "lib/orchestration/contracts.test.ts",
+    "lib/orchestration/worker-contracts.test.ts",
+    "lib/orchestration/worker-runtime.test.ts",
+    "lib/orchestration/owner-intent-flow.test.ts",
+    "lib/orchestration/planning-flow.test.ts",
+    "lib/orchestration/ai-gateway-planner.test.ts",
+    "lib/orchestration/validation-policy-flow.test.ts",
+    "lib/orchestration/authorization-flow.test.ts",
+    "lib/persistence/postgres/orchestration-store.integration.test.ts",
+    "lib/persistence/postgres/orchestration-worker-store.integration.test.ts",
+    "lib/persistence/postgres/owner-intent-orchestration.integration.test.ts",
+    "lib/persistence/postgres/orchestration-planning.integration.test.ts",
+    "lib/persistence/postgres/orchestration-validation-policy.integration.test.ts",
+    "lib/persistence/postgres/orchestration-authorization.integration.test.ts",
+    "lib/orchestration/persistent-worker.server.test.ts",
+    "lib/orchestration/worker-process.server.test.ts",
+    "lib/persistence/postgres/orchestration-crash-matrix.integration.test.ts",
+    "lib/orchestration/stage-router.test.ts",
+    "docs/CORE_TRANCHE_B_DURABLE_ORCHESTRATION_WORKER.md",
+    "lib/orchestration/task-job-materialization.test.ts",
+    "lib/persistence/postgres/orchestration-task-job-store.test.ts"
   ],
   "manualSourcePaths": [
     "docs/ARCHITECTURE.md",
@@ -661,9 +713,9 @@
     "status": "implemented-unconnected",
     "engine": "postgresql",
     "minimumEngineVersion": "16",
-    "migrationVersion": "2026-09-25.3",
-    "schemaVersion": "2.2.0",
-    "sourcePath": "migrations/2026-09-25.3_analytics_ingestion.sql",
+    "migrationVersion": "2026-09-28.7",
+    "schemaVersion": "2.3.0",
+    "sourcePath": "migrations/2026-09-28.6_ufo_authorization.sql",
     "adapterSourcePath": "lib/persistence/postgres/client.ts"
   },
   "voice": {

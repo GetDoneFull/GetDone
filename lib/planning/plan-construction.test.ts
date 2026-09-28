@@ -42,6 +42,21 @@ describe("plan construction boundary", () => {
     })).toThrow();
   });
 
+  it("rejects a model-proposed environment outside the authoritative request", () => {
+    const candidate = validPlan({
+      scope: {
+        ...validPlan().scope,
+        environment: "production"
+      }
+    });
+
+    expect(() => constructPlanProposal({
+      candidate,
+      request,
+      authorizedSource: { type: "objective", referenceId: "objective-1" }
+    })).toThrow(/scope\/environment/i);
+  });
+
   it("rejects a model-proposed source that was not authorized by GetDone", () => {
     expect(() => constructPlanProposal({
       candidate: validPlan(),

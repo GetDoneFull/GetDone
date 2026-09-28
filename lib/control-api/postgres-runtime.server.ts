@@ -21,12 +21,32 @@ import type {
   ResourceEnrollmentStores
 } from "@/lib/resources/enrollment";
 import { ResourceEnrollmentService } from "@/lib/resources/enrollment";
-import { PostgresEntityStore } from "@/lib/persistence/postgres/authority-stores";
+import {
+  PostgresEntityStore
+} from "@/lib/persistence/postgres/authority-stores";
 import {
   PostgresOwnerIntentStore,
   PostgresResourceEnrollmentReadinessStore,
   PostgresResourceEvidenceStore
 } from "@/lib/persistence/postgres/control-api-stores";
+import {
+  PostgresDecisionResumeRequestStore,
+  PostgresOrchestrationAuthorizationGrantStore,
+  PostgresOrchestrationDecisionStore
+} from "@/lib/persistence/postgres/orchestration-authorization-stores";
+import {
+  PostgresOrchestrationPlanProposalStore
+} from "@/lib/persistence/postgres/orchestration-planning-stores";
+import {
+  PostgresOrchestrationPolicyEvaluationStore,
+  PostgresOrchestrationValidationArtifactStore
+} from "@/lib/persistence/postgres/orchestration-validation-policy-stores";
+import {
+  PostgresOrchestrationRunStore
+} from "@/lib/persistence/postgres/orchestration-store";
+import {
+  DecisionResumeDispatcher
+} from "@/lib/orchestration/authorization-flow";
 import { PostgresControlPlaneTransactionManager } from "@/lib/persistence/postgres/transaction-manager";
 import { getPostgresRuntimeFromEnv } from "@/lib/persistence/postgres/runtime.server";
 import { runWithPostgresTenantScope } from "@/lib/persistence/postgres/tenant-context.server";
@@ -58,9 +78,20 @@ export function createPostgresControlApiAdapter(
   const decisionTransactions = new PostgresControlPlaneTransactionManager(
     db,
     (client) => ({
-      decisions: new PostgresEntityStore<AuthoritativeDecision>(client, "decision")
+      decisions: new PostgresEntityStore<AuthoritativeDecision>(client, "decision"),
+      resumeRequests: new PostgresDecisionResumeRequestStore(client)
     })
   );
+
+  const decisionResumeDispatcher = new DecisionResumeDispatcher({
+    runStore: new PostgresOrchestrationRunStore(db),
+    queue: new PostgresDecisionResumeRequestStore(db),
+    plans: new PostgresOrchestrationPlanProposalStore(db),
+    validations: new PostgresOrchestrationValidationArtifactStore(db),
+    policies: new PostgresOrchestrationPolicyEvaluationStore(db),
+    decisions: new PostgresOrchestrationDecisionStore(db),
+    grants: new PostgresOrchestrationAuthorizationGrantStore(db)
+  });
 
   const resourceRegistry = new ResourceRegistryService(
     new PostgresControlPlaneTransactionManager<ResourceRegistryStores>(
@@ -103,6 +134,7 @@ export function createPostgresControlApiAdapter(
     intents: new PostgresOwnerIntentStore(db),
     decisions,
     decisionTransactions,
+    decisionResumeDispatcher,
     resources,
     resourceRegistry,
     resourceEnrollments,

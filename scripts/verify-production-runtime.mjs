@@ -254,8 +254,11 @@ function validateEnvironmentIdentity() {
   }
 
   const role = env.GETDONE_PROCESS_ROLE?.trim();
-  if (role !== "web" && role !== "job-worker") {
-    fail("PROCESS_IDENTITY", "GETDONE_PROCESS_ROLE must be explicitly web or job-worker");
+  if (role !== "web" && role !== "job-worker" && role !== "orchestration-worker") {
+    fail(
+      "PROCESS_IDENTITY",
+      "GETDONE_PROCESS_ROLE must be explicitly web, job-worker, or orchestration-worker"
+    );
   }
 
   const runtimeRole = env.GETDONE_DB_RUNTIME_ROLE?.trim();
@@ -367,6 +370,60 @@ function validateWorkerConfiguration() {
     const workerId = required("GETDONE_JOB_WORKER_ID");
     if (workerId && !/^[A-Za-z0-9._:-]{1,128}$/.test(workerId)) {
       fail("WORKER_CONFIG", "GETDONE_JOB_WORKER_ID is malformed");
+    }
+  }
+
+  if (env.GETDONE_PROCESS_ROLE?.trim() === "orchestration-worker") {
+    const workerId = required("GETDONE_ORCHESTRATION_WORKER_ID");
+    if (workerId && !/^[A-Za-z0-9._:-]{1,128}$/.test(workerId)) {
+      fail("WORKER_CONFIG", "GETDONE_ORCHESTRATION_WORKER_ID is malformed");
+    }
+
+    const orchestrationIntegers = [
+      ["GETDONE_ORCHESTRATION_LEASE_SECONDS", 60],
+      ["GETDONE_ORCHESTRATION_HEARTBEAT_SECONDS", 20],
+      ["GETDONE_ORCHESTRATION_BATCH_SIZE", 10],
+      ["GETDONE_ORCHESTRATION_CONCURRENCY", 2],
+      ["GETDONE_ORCHESTRATION_RETRY_BASE_DELAY_MS", 1000],
+      ["GETDONE_ORCHESTRATION_RETRY_MAX_DELAY_MS", 120000],
+      ["GETDONE_ORCHESTRATION_MAX_FAILURES", 8],
+      ["GETDONE_ORCHESTRATION_POLL_INTERVAL_MS", 1000],
+      ["GETDONE_ORCHESTRATION_ERROR_BACKOFF_MS", 5000]
+    ];
+    const parsedOrchestration = new Map();
+    for (const [name, fallback] of orchestrationIntegers) {
+      const value = Number(env[name] || fallback);
+      parsedOrchestration.set(name, value);
+      if (!Number.isInteger(value) || value < 1) {
+        fail("WORKER_CONFIG", `${name} must be a positive integer`);
+      }
+    }
+    if (
+      Number(parsedOrchestration.get("GETDONE_ORCHESTRATION_HEARTBEAT_SECONDS"))
+      >= Number(parsedOrchestration.get("GETDONE_ORCHESTRATION_LEASE_SECONDS"))
+    ) {
+      fail(
+        "WORKER_CONFIG",
+        "GETDONE_ORCHESTRATION_HEARTBEAT_SECONDS must be lower than GETDONE_ORCHESTRATION_LEASE_SECONDS"
+      );
+    }
+    if (
+      Number(parsedOrchestration.get("GETDONE_ORCHESTRATION_CONCURRENCY"))
+      > Number(parsedOrchestration.get("GETDONE_ORCHESTRATION_BATCH_SIZE"))
+    ) {
+      fail(
+        "WORKER_CONFIG",
+        "GETDONE_ORCHESTRATION_CONCURRENCY must not exceed GETDONE_ORCHESTRATION_BATCH_SIZE"
+      );
+    }
+    if (
+      Number(parsedOrchestration.get("GETDONE_ORCHESTRATION_RETRY_BASE_DELAY_MS"))
+      > Number(parsedOrchestration.get("GETDONE_ORCHESTRATION_RETRY_MAX_DELAY_MS"))
+    ) {
+      fail(
+        "WORKER_CONFIG",
+        "GETDONE_ORCHESTRATION_RETRY_BASE_DELAY_MS must not exceed GETDONE_ORCHESTRATION_RETRY_MAX_DELAY_MS"
+      );
     }
   }
 

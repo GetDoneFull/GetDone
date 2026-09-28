@@ -73,6 +73,69 @@
       "transitionSchema": true,
       "destructive": false,
       "authorityCompatibilityRequired": true
+    },
+    {
+      "version": "2026-09-28.1",
+      "file": "migrations/2026-09-28.1_ufo_orchestration.sql",
+      "releaseId": "ufo-orchestration-core",
+      "phase": "expand",
+      "transitionSchema": true,
+      "destructive": false,
+      "authorityCompatibilityRequired": true
+    },
+    {
+      "version": "2026-09-28.2",
+      "file": "migrations/2026-09-28.2_ufo_orchestration_worker.sql",
+      "releaseId": "ufo-orchestration-worker",
+      "phase": "expand",
+      "transitionSchema": true,
+      "destructive": false,
+      "authorityCompatibilityRequired": true
+    },
+    {
+      "version": "2026-09-28.3",
+      "file": "migrations/2026-09-28.3_ufo_owner_intent_context.sql",
+      "releaseId": "ufo-owner-intent-context",
+      "phase": "expand",
+      "transitionSchema": true,
+      "destructive": false,
+      "authorityCompatibilityRequired": true
+    },
+    {
+      "version": "2026-09-28.4",
+      "file": "migrations/2026-09-28.4_ufo_durable_planning.sql",
+      "releaseId": "ufo-durable-planning",
+      "phase": "expand",
+      "transitionSchema": true,
+      "destructive": false,
+      "authorityCompatibilityRequired": true
+    },
+    {
+      "version": "2026-09-28.5",
+      "file": "migrations/2026-09-28.5_ufo_validation_policy.sql",
+      "releaseId": "ufo-validation-policy",
+      "phase": "expand",
+      "transitionSchema": true,
+      "destructive": false,
+      "authorityCompatibilityRequired": true
+    },
+    {
+      "version": "2026-09-28.6",
+      "file": "migrations/2026-09-28.6_ufo_authorization.sql",
+      "releaseId": "ufo-authorization",
+      "phase": "expand",
+      "transitionSchema": true,
+      "destructive": false,
+      "authorityCompatibilityRequired": true
+    },
+    {
+      "version": "2026-09-28.7",
+      "file": "migrations/2026-09-28.7_ufo_orchestration_worker_durability.sql",
+      "releaseId": "ufo-orchestration-worker-durability",
+      "phase": "expand",
+      "transitionSchema": true,
+      "destructive": false,
+      "authorityCompatibilityRequired": true
     }
   ]
 }
