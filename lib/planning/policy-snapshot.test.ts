@@ -72,7 +72,34 @@ describe("policy snapshot", () => {
 
     const first = createPolicySnapshot(base);
     const second = createPolicySnapshot({ ...base, fallbackRequired: true });
+    const riskBound = createPolicySnapshot({
+      ...base,
+      riskContext: {
+        publicVisibility: true,
+        customerImpact: "customer",
+        confidence: 0.9,
+        novelty: 0.2,
+        previousApprovedPolicy: false
+      },
+      usageBudgets: [{
+        policy: {
+          id: "outbound-daily",
+          scopeType: "company",
+          scopeId: "company-a",
+          metric: "outbound-emails",
+          period: "daily",
+          hardLimit: 500,
+          enabled: true
+        },
+        currentUsage: 100,
+        requestedUsage: 10
+      }]
+    });
     expect(second.snapshotHash).not.toBe(first.snapshotHash);
     expect(second.policyInputHash).not.toBe(first.policyInputHash);
+    expect(riskBound.snapshotHash).not.toBe(first.snapshotHash);
+    expect(riskBound.policyInputHash).not.toBe(first.policyInputHash);
+    expect(Object.isFrozen(riskBound.riskContext)).toBe(true);
+    expect(Object.isFrozen(riskBound.usageBudgets)).toBe(true);
   });
 });

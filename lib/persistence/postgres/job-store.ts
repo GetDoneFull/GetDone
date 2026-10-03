@@ -589,6 +589,7 @@ export class PostgresDurableJobStore implements DurableJobWorkStore {
     expectedJobVersion: number;
     expectedJobHash: string;
     idempotencyKey: string;
+    outcomeKind: "provider-completed" | "verified";
   }) {
     return this.database.transaction(async (db) => {
       const runtime = await db.query<RuntimeRow>(
@@ -659,12 +660,14 @@ export class PostgresDurableJobStore implements DurableJobWorkStore {
       await persistOutcomeAndEvent(db, {
         jobId: row.job_id,
         correlationId: row.envelope.correlationId,
-        kind: "succeeded",
+        kind: input.outcomeKind,
         runtimeState: "released",
         attempt: row.attempt,
         occurredAt: input.now,
         transactionHash: receipt.transactionHash,
-        eventType: "job.execution-succeeded"
+        eventType: input.outcomeKind === "verified"
+          ? "job.verified"
+          : "job.provider-completed"
       });
       return receipt;
     });

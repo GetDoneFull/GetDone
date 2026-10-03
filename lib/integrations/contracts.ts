@@ -1,6 +1,6 @@
 import type { TrustedExecutionScope } from "@/lib/control-plane/trusted-execution-scope";
 
-export const INTEGRATION_REGISTRY_CONTRACT_VERSION = "1.0.0";
+export const INTEGRATION_REGISTRY_CONTRACT_VERSION = "1.1.0";
 
 export type IntegrationKind =
   | "stripe"
@@ -23,19 +23,42 @@ export type IntegrationConnectionState =
   | "disabled"
   | "revoked";
 
+export interface IntegrationHealth {
+  status: "unknown" | "healthy" | "degraded" | "unavailable";
+  observedAt?: string;
+  detail?: string;
+}
+
+export interface IntegrationRateLimits {
+  requestsPerMinute?: number;
+  requestsPerDay?: number;
+  concurrentRequests?: number;
+}
+
 export interface CompanyIntegration {
   id: string;
   portfolioId: string;
   companyId: string;
   environment: TrustedExecutionScope["environment"];
   kind: IntegrationKind;
+  /** Provider identity is explicit and never inferred from model/job input. */
+  provider: string;
   displayName: string;
   adapterId: string;
   adapterVersion: string;
   credentialBindingId?: string;
+  /** Provider-side account identity, never a credential. */
+  accountIdentity: string | null;
+  /** GetDone capability IDs this exact tenant/environment binding supports. */
+  supportedCapabilities: readonly string[];
   readScopes: readonly string[];
   writeScopes: readonly string[];
   state: IntegrationConnectionState;
+  health: IntegrationHealth;
+  rateLimits: IntegrationRateLimits;
+  /** Explicit policy binding IDs that constrain this integration. */
+  policies: readonly string[];
+  metadata: Readonly<Record<string, string | number | boolean | null>>;
   mock: boolean;
   createdAt: string;
   updatedAt: string;

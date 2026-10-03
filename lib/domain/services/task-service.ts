@@ -1,5 +1,6 @@
 import { ControlPlaneError } from "@/lib/control-plane/errors";
 import {
+  assertAuthorizationConsumption,
   assertAuthorizationGrantEnvelope,
   createAuthorizationConsumptionRecord,
   type AuthorizationConsumptionRecord,
@@ -73,6 +74,60 @@ export interface CreateTaskInput {
   dependencyTaskIds?: readonly string[];
   maxRetries?: number;
   createdAt?: string;
+}
+
+async function assertCurrentTaskExecutionAuthority(
+  current: TaskRecord,
+  stores: TaskStores,
+  command: AuthoritativeCommandEnvelope,
+  now: number
+) {
+  const consumption = current.authorizationConsumption;
+  if (
+    !current.authorizationGrantId
+    || !current.authorizationGrantHash
+    || !consumption
+    || consumption.consumerType !== "task"
+    || consumption.consumerId !== current.id
+    || consumption.grantId !== current.authorizationGrantId
+    || consumption.grantHash !== current.authorizationGrantHash
+  ) {
+    throw new ControlPlaneError(
+      "FORBIDDEN",
+      "Executable Task requires exact persisted authorization consumption and grant lineage"
+    );
+  }
+
+  const grantStore = stores.authorizationGrants;
+  if (!grantStore) {
+    throw new ControlPlaneError(
+      "UNAVAILABLE",
+      "Current authorization storage is required before Task execution"
+    );
+  }
+
+  const grant = await grantStore.get(current.authorizationGrantId);
+  if (!grant || grant.grantHash !== current.authorizationGrantHash) {
+    throw new ControlPlaneError(
+      "FORBIDDEN",
+      "Task authorization is missing or differs from current authoritative storage"
+    );
+  }
+
+  assertAuthorizationGrantEnvelope(grant, command.scope, now);
+  assertAuthorizationConsumption(consumption, grant);
+
+  const required = [...new Set(current.capabilityRequirements)].sort();
+  const authorized = [...new Set(grant.capabilityNames)].sort();
+  if (
+    required.length !== authorized.length
+    || required.some((item, index) => item !== authorized[index])
+  ) {
+    throw new ControlPlaneError(
+      "FORBIDDEN",
+      "Executable Task capabilities no longer match current authorization"
+    );
+  }
 }
 
 async function assertTaskDependenciesReady(
@@ -275,12 +330,12 @@ export class TaskService {
       command,
       triggeringEvent: "task-queued",
       beforeTransition: async (current, transaction) => {
-        if (!current.authorizationConsumption) {
-          throw new ControlPlaneError(
-            "FORBIDDEN",
-            "Task cannot be queued without persisted authorization consumption"
-          );
-        }
+        await assertCurrentTaskExecutionAuthority(
+          current,
+          transaction.stores,
+          command,
+          this.now().getTime()
+        );
         await assertTaskDependenciesReady(transaction.stores.tasks, current);
       },
       now: this.now
@@ -296,6 +351,14 @@ export class TaskService {
       to: "running",
       command,
       triggeringEvent: "task-started",
+      beforeTransition: async (current, transaction) => {
+        await assertCurrentTaskExecutionAuthority(
+          current,
+          transaction.stores,
+          command,
+          this.now().getTime()
+        );
+      },
       now: this.now
     });
   }
@@ -316,9 +379,12 @@ export class TaskService {
       command,
       triggeringEvent: "task-retried",
       beforeTransition: async (current, transaction) => {
-        if (!current.authorizationConsumption) {
-          throw new ControlPlaneError("FORBIDDEN", "Task retry requires authoritative authorization consumption");
-        }
+        await assertCurrentTaskExecutionAuthority(
+          current,
+          transaction.stores,
+          command,
+          Date.parse(retriedAt)
+        );
         const retryCount = current.retryCount ?? 0;
         if (retryCount >= (current.maxRetries ?? 3)) {
           throw new ControlPlaneError("CONFLICT", "Task retry limit is exhausted");
@@ -355,9 +421,12 @@ export class TaskService {
       command,
       triggeringEvent: "task-timeout-recovered",
       beforeTransition: async (current, transaction) => {
-        if (!current.authorizationConsumption) {
-          throw new ControlPlaneError("FORBIDDEN", "Task timeout recovery requires authoritative authorization");
-        }
+        await assertCurrentTaskExecutionAuthority(
+          current,
+          transaction.stores,
+          command,
+          Date.parse(timedOutAt)
+        );
         const retryCount = current.retryCount ?? 0;
         if (retryCount >= (current.maxRetries ?? 3)) {
           throw new ControlPlaneError("CONFLICT", "Task retry limit is exhausted");

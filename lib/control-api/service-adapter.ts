@@ -19,6 +19,20 @@ import {
 import type { VerificationRequestRecord } from "@/lib/domain/services/verification-service";
 import type { Resource } from "@/lib/domain/resources";
 import type {
+  PreferenceLearningService,
+  PreferenceSuggestionResolution
+} from "@/lib/domain/preference-learning";
+import {
+  buildJobOwnerExplanation,
+  buildOwnerFailurePresentation
+} from "@/lib/explainability/job-owner-explanation";
+import {
+  normalizeObjectiveIntake,
+  type ObjectiveIntakeInput,
+  type ObjectiveIntakeStore,
+  type ObjectiveRecord
+} from "@/lib/domain/objective-inbox";
+import type {
   ControlApiApplicationAdapter,
   ControlApiHealth,
   ControlApiPrincipal,
@@ -57,6 +71,11 @@ export interface ScopedReadStore<T extends { id: string; portfolioId: string; co
 }
 
 export interface OwnerIntentStore {
+  /**
+   * Production persistence MUST not acknowledge an accepted OwnerIntent until
+   * the intent and its initial durable orchestration admission have committed
+   * together. In-memory/test implementations may remain non-durable.
+   */
   create(record: OwnerIntentRecord, idempotencyKey: string): Promise<OwnerIntentRecord>;
 }
 
@@ -65,8 +84,19 @@ export interface ServiceBackedControlApiDependencies {
   scopes: ControlApiScopeResolver;
   authorizationEvidence?: ControlApiAuthorizationEvidenceResolver;
   intents: OwnerIntentStore;
+  objectives: ScopedReadStore<ObjectiveRecord>;
+  objectiveIntake: ObjectiveIntakeStore;
+  preferenceLearning?: PreferenceLearningService;
   decisions: ScopedReadStore<AuthoritativeDecision>;
   decisionTransactions: DecisionTransactionManager;
+  /**
+   * Optional post-commit dispatcher for orchestration Decisions. The Decision
+   * transaction already emits a durable resume request; dispatcher failures
+   * must not roll back or misreport the committed owner Decision.
+   */
+  decisionResumeDispatcher?: {
+    processDecision(decision: AuthoritativeDecision): Promise<unknown>;
+  };
   resources: ScopedReadStore<Resource>;
   resourceRegistry: ResourceRegistryService;
   resourceEnrollments: ScopedReadStore<ResourceEnrollmentRecord>;
@@ -96,6 +126,7 @@ function assertScopedEntity<T extends { portfolioId: string; companyId: string }
 }
 
 export function toJobResultView(job: JobRecord): JobResultView {
+  const failure = buildOwnerFailurePresentation(job);
   return Object.freeze({
     jobId: job.id,
     state: job.state,
@@ -105,7 +136,9 @@ export function toJobResultView(job: JobRecord): JobResultView {
     verificationReceiptHash: job.verificationReceiptHash,
     verifiedCompletionFactId: job.verifiedCompletionFactId,
     verifiedCompletionFactHash: job.verifiedCompletionFactHash,
-    failureReason: job.failureReason
+    failureReason: failure?.summary,
+    explanation: buildJobOwnerExplanation(job),
+    failure
   });
 }
 
@@ -236,6 +269,79 @@ export class ServiceBackedControlApiAdapter implements ControlApiApplicationAdap
     });
   }
 
+  async submitObjectives(
+    principal: ControlApiPrincipal,
+    input: ObjectiveIntakeInput,
+    idempotencyKey: string,
+    correlationId?: string
+  ) {
+    return this.scoped(principal, async () => {
+      requireRole(principal, ["owner"], "Objective submission");
+      const records = normalizeObjectiveIntake(input, {
+        scope: principal.scope,
+        correlationId: correlationId ?? createCorrelationId(),
+        now: this.now().toISOString()
+      });
+      return this.deps.objectiveIntake.createBatch(records, idempotencyKey);
+    });
+  }
+
+  listObjectives(principal: ControlApiPrincipal) {
+    return this.scoped(principal, () => this.deps.objectives.listByScope(
+      principal.scope.portfolioId,
+      principal.scope.companyId
+    ));
+  }
+
+  async getObjective(principal: ControlApiPrincipal, objectiveId: string) {
+    return this.scoped(principal, async () =>
+      assertScopedEntity(principal, await this.deps.objectives.get(objectiveId))
+    );
+  }
+
+  listPreferenceSuggestions(principal: ControlApiPrincipal) {
+    requireRole(principal, ["owner", "admin"], "Preference suggestions");
+    if (!this.deps.preferenceLearning) {
+      throw new ControlPlaneError("UNAVAILABLE", "Preference learning is not connected");
+    }
+    return this.scoped(principal, () =>
+      this.deps.preferenceLearning!.listSuggestions(principal.scope)
+    );
+  }
+
+  resolvePreferenceSuggestion(
+    principal: ControlApiPrincipal,
+    suggestionId: string,
+    action: PreferenceSuggestionResolution
+  ) {
+    requireRole(principal, ["owner"], "Preference rule confirmation");
+    if (!this.deps.preferenceLearning) {
+      throw new ControlPlaneError("UNAVAILABLE", "Preference learning is not connected");
+    }
+    return this.scoped(principal, () =>
+      this.deps.preferenceLearning!.resolveSuggestion({
+        suggestionId,
+        scope: principal.scope,
+        actorId: principal.actor.id,
+        action,
+        resolvedAt: this.now().toISOString()
+      })
+    );
+  }
+
+  listConfirmedPreferenceRules(
+    principal: ControlApiPrincipal,
+    capability: string
+  ) {
+    requireRole(principal, ["owner", "admin"], "Confirmed preference rules");
+    if (!this.deps.preferenceLearning) {
+      throw new ControlPlaneError("UNAVAILABLE", "Preference learning is not connected");
+    }
+    return this.scoped(principal, () =>
+      this.deps.preferenceLearning!.listActiveRules(principal.scope, capability)
+    );
+  }
+
   listDecisions(principal: ControlApiPrincipal) {
     return this.scoped(principal, () => this.deps.decisions.listByScope(
       principal.scope.portfolioId,
@@ -279,7 +385,7 @@ export class ServiceBackedControlApiAdapter implements ControlApiApplicationAdap
         }
       });
 
-      return resolveDecision({
+      const resolved = await resolveDecision({
         command,
         transactionManager: this.deps.decisionTransactions,
         decisionId: input.decisionId,
@@ -287,6 +393,17 @@ export class ServiceBackedControlApiAdapter implements ControlApiApplicationAdap
         stepUpProof: principal.stepUpProof,
         now: this.now
       });
+
+      // Orchestrated Decisions already wrote a durable resume request in the
+      // same authoritative transaction. This call is only a low-latency wakeup;
+      // if it fails, the durable queue remains pending for later recovery.
+      try {
+        await this.deps.decisionResumeDispatcher?.processDecision(resolved);
+      } catch {
+        // Do not return an HTTP failure after the owner Decision has committed.
+      }
+
+      return resolved;
     });
   }
 

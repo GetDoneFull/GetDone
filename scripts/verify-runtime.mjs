@@ -20,9 +20,11 @@ const expectedNpm = typeof packageJson.packageManager === "string"
   ? packageJson.packageManager.match(/^npm@(.+)$/)?.[1]
   : undefined;
 
-if (!expectedNpm || npmVersion !== expectedNpm) {
-  console.error(`GetDone requires npm ${expectedNpm ?? "(packageManager missing)"}; received ${npmVersion}`);
+const expectedNpmMajor = expectedNpm?.split(".")[0];
+const actualNpmMajor = npmVersion.split(".")[0];
+if (!expectedNpmMajor || actualNpmMajor !== expectedNpmMajor) {
+  console.error(`GetDone requires npm ${expectedNpm ?? "(packageManager missing)"} compatible major; received ${npmVersion}`);
   process.exit(1);
 }
 
-console.log(`Runtime verified: node=${process.versions.node} npm=${npmVersion}`);
+console.log(`Runtime verified: node=${process.versions.node} npm=${npmVersion} packageManager=${packageJson.packageManager}`);

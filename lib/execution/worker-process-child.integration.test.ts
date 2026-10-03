@@ -39,7 +39,7 @@ describeChild("durable worker OS child process", () => {
         execute: async (context) => {
           expect(context.envelope.jobId).toBe(jobId);
           await context.heartbeat();
-          return { kind: "succeeded" };
+          return { kind: "provider-completed" };
         }
       });
       expect(results.length).toBeLessThanOrEqual(1);

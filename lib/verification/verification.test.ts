@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertVerificationReceipt,
+  createVerificationContract,
   createVerificationEvidence,
   createVerificationRequest,
   resolveVerificationRequest
@@ -106,6 +107,119 @@ describe("verification receipts", () => {
       ],
       { receiptId: "receipt-4", verifiedAt: now }
     )).toThrow();
+  });
+
+  it("requires verified current state to satisfy a deployment contract", () => {
+    const contract = createVerificationContract({
+      id: "deploy-abc123",
+      checks: [
+        { id: "exists", key: "deployment.exists", operator: "truthy", required: true },
+        { id: "environment", key: "deployment.environment", operator: "equals", expected: "production", required: true },
+        { id: "sha", key: "deployment.sha", operator: "equals", expected: "abc123", required: true },
+        { id: "health", key: "deployment.health", operator: "truthy", required: true },
+        { id: "responds", key: "application.responds", operator: "truthy", required: true },
+        { id: "functional", key: "functional.check", operator: "truthy", required: true }
+      ]
+    });
+    const deploymentRequest = createVerificationRequest({
+      id: "verify-deploy-1",
+      portfolioId: scope.portfolioId,
+      companyId: scope.companyId,
+      environment: scope.environment,
+      subject: { type: "job", id: "job-1" },
+      strategies: ["system"],
+      requiresIndependentEvidence: true,
+      executionIndependenceKey: "provider:operation-1",
+      contract,
+      maxEvidenceAgeSeconds: 600,
+      requestedAt,
+      expiresAt: "2026-09-20T20:00:00Z"
+    });
+
+    const providerAccepted = createVerificationEvidence({
+      id: "provider-accepted",
+      portfolioId: scope.portfolioId,
+      companyId: scope.companyId,
+      subject: { type: "job", id: "job-1" },
+      strategy: "system",
+      result: "pass",
+      sourceType: "provider",
+      sourceId: "provider:operation-1",
+      independenceKey: "provider:operation-1",
+      observedAt: now,
+      payloadHash: "provider-result",
+      provenance: "provider-response",
+      observations: { "deployment.exists": true }
+    });
+
+    const acceptedOnly = resolveVerificationRequest(
+      deploymentRequest,
+      [providerAccepted],
+      { receiptId: "receipt-provider-only", verifiedAt: now }
+    );
+    expect(acceptedOnly.verdict).toBe("uncertain");
+
+    const currentState = createVerificationEvidence({
+      id: "deploy-probe",
+      portfolioId: scope.portfolioId,
+      companyId: scope.companyId,
+      subject: { type: "job", id: "job-1" },
+      strategy: "system",
+      result: "pass",
+      sourceType: "system-probe",
+      sourceId: "deployment-verifier",
+      independenceKey: "verifier:deployment",
+      observedAt: now,
+      payloadHash: "deploy-state",
+      provenance: "deployment-probe",
+      observations: {
+        "deployment.exists": true,
+        "deployment.environment": "production",
+        "deployment.sha": "abc123",
+        "deployment.health": true,
+        "application.responds": true,
+        "functional.check": true
+      }
+    });
+
+    const verified = resolveVerificationRequest(
+      deploymentRequest,
+      [providerAccepted, currentState],
+      { receiptId: "receipt-deploy-verified", verifiedAt: now }
+    );
+    expect(verified.verdict).toBe("verified");
+    expect(verified.verifiedCurrentState?.values["deployment.sha"]).toBe("abc123");
+    expect(verified.contractResults?.every((result) => result.verdict === "verified")).toBe(true);
+
+    const wrongSha = createVerificationEvidence({
+      id: "deploy-probe-wrong-sha",
+      portfolioId: scope.portfolioId,
+      companyId: scope.companyId,
+      subject: { type: "job", id: "job-1" },
+      strategy: "system",
+      result: "pass",
+      sourceType: "system-probe",
+      sourceId: "deployment-verifier",
+      independenceKey: "verifier:deployment",
+      observedAt: now,
+      payloadHash: "deploy-state-wrong-sha",
+      provenance: "deployment-probe",
+      observations: {
+        "deployment.exists": true,
+        "deployment.environment": "production",
+        "deployment.sha": "deadbeef",
+        "deployment.health": true,
+        "application.responds": true,
+        "functional.check": true
+      }
+    });
+    const failed = resolveVerificationRequest(
+      deploymentRequest,
+      [wrongSha],
+      { receiptId: "receipt-deploy-failed", verifiedAt: now }
+    );
+    expect(failed.verdict).toBe("failed");
+    expect(failed.verifiedCurrentState?.values["deployment.sha"]).toBe("deadbeef");
   });
 
   it("rejects mutated receipts", () => {

@@ -10,7 +10,20 @@ import {
   type ApprovalProof,
   type StepUpProof
 } from "@/lib/authorization/proofs";
-import type { StepPolicyEvaluation } from "@/lib/planning/policy-engine";
+import {
+  POLICY_ENGINE_VERSION,
+  POLICY_RULES_HASH,
+  type StepPolicyEvaluation
+} from "@/lib/planning/policy-engine";
+import {
+  CAPABILITY_REGISTRY_HASH,
+  CAPABILITY_REGISTRY_VERSION,
+  requireEnabledCapability
+} from "@/lib/domain/capabilities";
+import {
+  CURRENT_POLICY_REGISTRY_HASH,
+  CURRENT_POLICY_VERSION
+} from "@/lib/domain/policy-registry";
 import type { PolicySnapshot } from "@/lib/planning/policy-snapshot";
 import { assertPolicySnapshotIntegrity } from "@/lib/planning/policy-snapshot";
 import { hashPlan, hashPlanStep } from "@/lib/planning/plan-hash";
@@ -39,13 +52,25 @@ export interface AuthorizationGrant {
   stepId: string;
   stepHash: string;
   capabilityNames: readonly string[];
+  objectiveId?: string;
+  integrationId?: string;
+  executionLimits?: Readonly<{
+    environment: TrustedExecutionScope["environment"];
+    deadline?: string;
+    expectedDurationSeconds?: number;
+    retryable: boolean;
+    maxJobCostCents?: number;
+  }>;
   validationReceiptId: string;
   validationReceiptHash: string;
   policySnapshotId: string;
   policySnapshotHash: string;
   policyVersion: string;
+  policyRegistryHash?: string;
   policyEngineVersion: string;
   policyRulesHash: string;
+  capabilityRegistryVersion?: string;
+  capabilityRegistryHash?: string;
   decisionId?: string;
   approvalProofId?: string;
   approvalProofHash?: string;
@@ -227,13 +252,28 @@ export function issueAuthorizationGrant(input: {
     capabilityNames: [
       ...new Set(step.capabilityRequests.map((request) => request.capability))
     ].sort(),
+    objectiveId: input.plan.source.type === "objective"
+      ? input.plan.source.objectiveId
+      : undefined,
+    integrationId: input.policySnapshot.integrationId,
+    executionLimits: {
+      environment: step.resourceRequirements.execution.environment,
+      deadline: step.resourceRequirements.execution.deadline,
+      expectedDurationSeconds:
+        step.resourceRequirements.execution.expectedDurationSeconds,
+      retryable: step.resourceRequirements.execution.retryable,
+      maxJobCostCents: step.resourceRequirements.economics.maxJobCostCents
+    },
     validationReceiptId: input.receipt.id,
     validationReceiptHash: input.receipt.receiptHash,
     policySnapshotId: input.policySnapshot.id,
     policySnapshotHash: input.policySnapshot.snapshotHash,
     policyVersion: input.policySnapshot.policyVersion,
+    policyRegistryHash: input.policySnapshot.policyRegistryHash,
     policyEngineVersion: input.policySnapshot.policyEngineVersion,
     policyRulesHash: input.policySnapshot.policyRulesHash,
+    capabilityRegistryVersion: input.policySnapshot.capabilityRegistryVersion,
+    capabilityRegistryHash: input.policySnapshot.capabilityRegistryHash,
     decisionId: input.approvalProof?.decisionId,
     approvalProofId: input.approvalProof?.id,
     approvalProofHash: input.approvalProof?.proofHash,
@@ -270,15 +310,64 @@ export function assertAuthorizationGrantEnvelope(
     );
   }
 
+  if (
+    grant.disposition !== "AUTO"
+    && (
+      !grant.decisionId
+      || !grant.approvalProofId
+      || !grant.approvalProofHash
+    )
+  ) {
+    throw new ControlPlaneError(
+      "FORBIDDEN",
+      "Approval-backed authorization grant is missing immutable Decision proof lineage"
+    );
+  }
+
+  if (
+    grant.disposition === "STRONG_APPROVAL"
+    && (!grant.stepUpProofId || !grant.stepUpProofHash)
+  ) {
+    throw new ControlPlaneError(
+      "FORBIDDEN",
+      "Strong approval authorization grant is missing step-up proof lineage"
+    );
+  }
+
   assertTrustedExecutionScopeEqual(scope, grant.scope, {
     requireSameResource: Boolean(scope.resourceId || grant.scope.resourceId)
   });
 
-  if (Date.parse(grant.issuedAt) > now || Date.parse(grant.expiresAt) <= now) {
+  const issuedAt = Date.parse(grant.issuedAt);
+  const expiresAt = Date.parse(grant.expiresAt);
+  if (
+    !Number.isFinite(issuedAt)
+    || !Number.isFinite(expiresAt)
+    || issuedAt > now
+    || expiresAt <= now
+  ) {
     throw new ControlPlaneError(
       "FORBIDDEN",
       "Authorization grant is not currently valid"
     );
+  }
+
+  if (
+    grant.policyVersion !== CURRENT_POLICY_VERSION
+    || grant.policyRegistryHash !== CURRENT_POLICY_REGISTRY_HASH
+    || grant.policyEngineVersion !== POLICY_ENGINE_VERSION
+    || grant.policyRulesHash !== POLICY_RULES_HASH
+    || grant.capabilityRegistryVersion !== CAPABILITY_REGISTRY_VERSION
+    || grant.capabilityRegistryHash !== CAPABILITY_REGISTRY_HASH
+  ) {
+    throw new ControlPlaneError(
+      "POLICY_BLOCKED",
+      "Authorization grant references stale or materially changed policy"
+    );
+  }
+
+  for (const capabilityName of grant.capabilityNames) {
+    requireEnabledCapability(capabilityName);
   }
 
   return grant;

@@ -44,32 +44,59 @@ export function createCompanyIntegration(input: {
   id: string;
   scope: TrustedExecutionScope;
   kind: IntegrationKind;
+  provider?: string;
   displayName: string;
   adapterId: string;
   adapterVersion: string;
   credentialBindingId?: string;
+  accountIdentity?: string;
+  supportedCapabilities?: readonly string[];
   readScopes?: readonly string[];
   writeScopes?: readonly string[];
+  health?: CompanyIntegration["health"];
+  rateLimits?: CompanyIntegration["rateLimits"];
+  policies?: readonly string[];
+  metadata?: Readonly<Record<string, string | number | boolean | null>>;
   mock?: boolean;
   createdAt: string;
 }): CompanyIntegration {
   assertNoRawSecretShape(input.credentialBindingId, "credentialBindingId");
   const createdAt = parseTime(input.createdAt, "integration createdAt");
+  if (input.health?.observedAt) parseTime(input.health.observedAt, "integration health observedAt");
+  for (const [name, value] of Object.entries(input.rateLimits ?? {})) {
+    if (value !== undefined && (!Number.isInteger(value) || value < 0)) {
+      throw new ControlPlaneError("VALIDATION_FAILED", `Integration rate limit ${name} must be a non-negative integer`);
+    }
+  }
   const base = {
     id: safeText(input.id, "integration id"),
     portfolioId: input.scope.portfolioId,
     companyId: input.scope.companyId,
     environment: input.scope.environment,
     kind: input.kind,
+    provider: safeText(input.provider ?? input.kind, "provider"),
     displayName: safeText(input.displayName, "displayName"),
     adapterId: safeText(input.adapterId, "adapterId"),
     adapterVersion: safeText(input.adapterVersion, "adapterVersion", 80),
     credentialBindingId: input.credentialBindingId
       ? safeText(input.credentialBindingId, "credentialBindingId", 200)
       : undefined,
+    accountIdentity: input.accountIdentity
+      ? safeText(input.accountIdentity, "accountIdentity", 240)
+      : null,
+    supportedCapabilities: normalizeScopes(
+      input.supportedCapabilities ?? [],
+      "supported capability"
+    ),
     readScopes: normalizeScopes(input.readScopes ?? [], "read scope"),
     writeScopes: normalizeScopes(input.writeScopes ?? [], "write scope"),
     state: "disconnected" as const,
+    health: Object.freeze(input.health
+      ? { ...input.health }
+      : { status: "unknown" as const }),
+    rateLimits: Object.freeze({ ...(input.rateLimits ?? {}) }),
+    policies: normalizeScopes(input.policies ?? [], "integration policy"),
+    metadata: Object.freeze({ ...(input.metadata ?? {}) }),
     mock: input.mock ?? false,
     createdAt,
     updatedAt: createdAt

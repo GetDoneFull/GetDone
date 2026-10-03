@@ -5,6 +5,7 @@ import {
   detectObjectiveConflicts,
   evaluateBudget,
   evaluateGuardrails,
+  evaluateUsageBudget,
   guardrailsForScope
 } from "@/lib/domain/objectives";
 
@@ -53,6 +54,43 @@ describe("objectives and guardrails", () => {
       currentSpendCents: 95_000,
       requestedCostCents: 10_000
     }).disposition).toBe("blocked");
+  });
+
+  it("evaluates non-monetary usage budgets with hard and approval thresholds", () => {
+    const policy = {
+      id: "outbound-daily",
+      scopeType: "company" as const,
+      scopeId: "c1",
+      metric: "outbound-emails",
+      period: "daily" as const,
+      hardLimit: 500,
+      approvalThreshold: 400,
+      enabled: true
+    };
+
+    expect(evaluateUsageBudget(policy, {
+      scopeId: "c1",
+      currentUsage: 350,
+      requestedUsage: 25
+    })).toMatchObject({ disposition: "allow", projectedUsage: 375 });
+
+    expect(evaluateUsageBudget(policy, {
+      scopeId: "c1",
+      currentUsage: 390,
+      requestedUsage: 20
+    })).toMatchObject({ disposition: "approval-required", projectedUsage: 410 });
+
+    expect(evaluateUsageBudget(policy, {
+      scopeId: "c1",
+      currentUsage: 499,
+      requestedUsage: 2
+    })).toMatchObject({ disposition: "blocked", projectedUsage: 501 });
+
+    expect(() => evaluateUsageBudget(policy, {
+      scopeId: "c1",
+      currentUsage: -1,
+      requestedUsage: 1
+    })).toThrow(/non-negative integers/i);
   });
 
   it("blocks protected guardrail violations", () => {

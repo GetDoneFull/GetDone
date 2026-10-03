@@ -15,7 +15,10 @@ import {
   handleListResources,
   handleListVerifications,
   handleMutateDecision,
-  handleOwnerIntent
+  handleOwnerIntent,
+  handleSubmitObjectives,
+  handleListObjectives,
+  handleGetObjective
 } from "@/lib/control-api/http";
 import {
   resetControlApiAdapter
@@ -327,6 +330,57 @@ describeIntegration("PostgreSQL-backed Control API HTTP acceptance", () => {
       "SELECT COUNT(*)::int AS count FROM audit_events WHERE entity_type='owner-intent'"
     );
     expect(audits.rows[0].count).toBe(1);
+  });
+
+  it("persists, audits, replays, and reads normalized objectives without a parallel task API", async () => {
+    const key = "objective-replay-key";
+    const makeRequest = () => authenticatedRequest(
+      "/api/control/objectives",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          rawText: "Fix onboarding. Make safe fixes yourself. Deploy staging automatically. Ask me before production."
+        })
+      },
+      { "idempotency-key": key }
+    );
+
+    const first = await handleSubmitObjectives(makeRequest());
+    const replay = await handleSubmitObjectives(makeRequest());
+    expect(first.status).toBe(201);
+    expect(replay.status).toBe(201);
+
+    const firstBody = await envelope<Array<{ id: string; normalizedGoal: string; constraints: string[] }>>(first);
+    const replayBody = await envelope<Array<{ id: string }>>(replay);
+    expect(firstBody.data?.[0]).toMatchObject({
+      normalizedGoal: "Fix onboarding",
+      constraints: [
+        "Make safe fixes yourself",
+        "Deploy staging automatically",
+        "Ask me before production"
+      ]
+    });
+    expect(replayBody.data?.[0]?.id).toBe(firstBody.data?.[0]?.id);
+
+    const persisted = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM control_plane_entities WHERE entity_type='objective'"
+    );
+    expect(persisted.rows[0].count).toBe(1);
+
+    const audits = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM audit_events WHERE entity_type='objective'"
+    );
+    expect(audits.rows[0].count).toBe(1);
+
+    const list = await handleListObjectives(authenticatedRequest("/api/control/objectives"));
+    const listBody = await envelope<Array<{ id: string }>>(list);
+    expect(listBody.data?.map((item) => item.id)).toContain(firstBody.data?.[0]?.id);
+
+    const detail = await handleGetObjective(
+      authenticatedRequest(`/api/control/objectives/${firstBody.data?.[0]?.id}`),
+      firstBody.data?.[0]?.id ?? "missing"
+    );
+    expect(detail.status).toBe(200);
   });
 
   it("enforces scoped reads across decisions, resources, enrollments, jobs/results, and verifications", async () => {

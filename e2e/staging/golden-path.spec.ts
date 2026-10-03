@@ -61,7 +61,7 @@ test.describe("authoritative staging browser golden path", () => {
 
     await page.goto(`/operations/jobs/${execution.jobId}`);
     await expect(page.getByRole("heading", { name: "Authoritative completion" })).toBeVisible();
-    await expect(page.getByRole("status")).toHaveText("succeeded");
+    await expect(page.getByRole("status")).toHaveText("verified");
     await expect(page.getByText(/Verified · 1 evidence item/)).toBeVisible();
     await expect(page.getByTestId("job-correlation-id")).toHaveText(intent.correlationId);
 
@@ -79,7 +79,7 @@ test.describe("authoritative staging browser golden path", () => {
       environment: "staging",
       data: {
         jobId: execution.jobId,
-        state: "succeeded",
+        state: "verified",
         correlationId: intent.correlationId,
         verificationReceiptId: execution.receiptId
       }

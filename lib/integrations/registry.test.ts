@@ -35,8 +35,21 @@ function makeIntegration(input: {
     adapterId: input.adapterId ?? "development-mock-integration",
     adapterVersion: "1.0.0",
     credentialBindingId: input.credentialBindingId ?? "credential-binding-github-a",
+    accountIdentity: "github-account-a",
+    supportedCapabilities: [
+      "github.repository.read",
+      "github.branch.create",
+      "github.pull-request.write"
+    ],
     readScopes: ["repository.read"],
     writeScopes: ["repository.write"],
+    health: {
+      status: "healthy",
+      observedAt: "2026-09-20T21:59:00Z"
+    },
+    rateLimits: { requestsPerMinute: 60 },
+    policies: ["policy:github-default"],
+    metadata: { installation: "app" },
     mock: true,
     createdAt: "2026-09-20T22:00:00Z"
   });
@@ -83,6 +96,24 @@ class TenantAdversarialStore implements IntegrationRegistryStore {
 }
 
 describe("Phase 4 deterministic Integration Registry", () => {
+  it("records the minimum provider/capability/health/policy contract", () => {
+    const record = makeIntegration();
+    expect(record).toMatchObject({
+      provider: "github",
+      accountIdentity: "github-account-a",
+      supportedCapabilities: [
+        "github.branch.create",
+        "github.pull-request.write",
+        "github.repository.read"
+      ],
+      state: "disconnected",
+      health: { status: "healthy" },
+      rateLimits: { requestsPerMinute: 60 },
+      policies: ["policy:github-default"],
+      metadata: { installation: "app" }
+    });
+  });
+
   it("keeps read and write permissions explicit and separate", async () => {
     const record = await connected();
     expect(assertIntegrationUsable({

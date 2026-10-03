@@ -125,7 +125,7 @@ import {
 } from "@/lib/domain/services/event-service";
 import { toJobResultView } from "@/lib/control-api/service-adapter";
 
-export const GOLDEN_PATH_HARNESS_VERSION = "1.1.0";
+export const GOLDEN_PATH_HARNESS_VERSION = "1.2.0";
 
 export type GoldenPathStageName =
   | "objective"
@@ -143,7 +143,8 @@ export type GoldenPathStageName =
   | "credential-admission"
   | "dispatch-admission"
   | "start-verification"
-  | "job-running"
+  | "job-executing"
+  | "provider-completed"
   | "completion-verification"
   | "outcome"
   | "event-audit"
@@ -164,10 +165,10 @@ export interface GoldenPathSimulationResult {
   productionExecutionClaimed: false;
   stages: readonly GoldenPathStage[];
   final: Readonly<{
-    jobState: "succeeded";
+    jobState: "verified";
     outcomeState: "verified";
     eventState: "processed";
-    ownerVisibleJobState: "succeeded";
+    ownerVisibleJobState: "verified";
     auditEventCount: number;
     memoryAuthority: "advisory";
     reservationState: "released";
@@ -1147,19 +1148,19 @@ export async function runDeterministicGoldenPath(): Promise<GoldenPathSimulation
   });
   bridgeStore.addStart(startFact);
   jobNow = "2026-09-20T22:00:19Z";
-  const runningJob = await jobService.start(
+  const executingJob = await jobService.start(
     claimedJob.id,
     jobCommand("start"),
     startFact.id
   );
   stages.push(stage(
-    "job-running",
-    runningJob.id,
+    "job-executing",
+    executingJob.id,
     sha256Hex({
-      id: runningJob.id,
-      state: runningJob.state,
-      verifiedStartFactHash: runningJob.verifiedStartFactHash,
-      verifiedRunningPlacementHash: runningJob.verifiedRunningPlacementHash
+      id: executingJob.id,
+      state: executingJob.state,
+      verifiedStartFactHash: executingJob.verifiedStartFactHash,
+      verifiedRunningPlacementHash: executingJob.verifiedRunningPlacementHash
     })
   ));
 
@@ -1224,10 +1225,30 @@ export async function runDeterministicGoldenPath(): Promise<GoldenPathSimulation
   });
   bridgeStore.addCompletion(completionFact);
   jobNow = "2026-09-20T22:02:04Z";
+  const providerCompletedJob = await jobService.recordProviderCompletion(
+    executingJob.id,
+    jobCommand("provider-completed"),
+    {
+      providerResultId: "golden-provider-operation",
+      providerResultHash: verifiedCompletion.recordHash,
+      completedAt: "2026-09-20T22:02:03Z",
+      verifiedCompletionFactId: completionFact.id
+    }
+  );
+  stages.push(stage(
+    "provider-completed",
+    providerCompletedJob.id,
+    sha256Hex({
+      id: providerCompletedJob.id,
+      state: providerCompletedJob.state,
+      providerResultHash: providerCompletedJob.providerResultHash,
+      verifiedCompletionFactHash: providerCompletedJob.verifiedCompletionFactHash
+    })
+  ));
+
   await jobService.beginVerification(
-    runningJob.id,
-    jobCommand("verification-begin"),
-    completionFact.id
+    providerCompletedJob.id,
+    jobCommand("verification-begin")
   );
 
   const jobVerificationRequest = createJobCompletionVerificationRequest({
@@ -1256,9 +1277,9 @@ export async function runDeterministicGoldenPath(): Promise<GoldenPathSimulation
   );
   verificationStore.add(jobVerificationReceipt);
   jobNow = "2026-09-20T22:02:07Z";
-  const succeededJob = await jobService.succeed(
-    runningJob.id,
-    jobCommand("succeed"),
+  const verifiedJob = await jobService.verify(
+    providerCompletedJob.id,
+    jobCommand("verify"),
     jobVerificationReceipt.id
   );
   stages.push(stage(
@@ -1268,7 +1289,7 @@ export async function runDeterministicGoldenPath(): Promise<GoldenPathSimulation
       completionHash: verifiedCompletion.recordHash,
       completionFactHash: completionFact.factHash,
       jobVerificationReceiptHash: jobVerificationReceipt.receiptHash,
-      jobState: succeededJob.state
+      jobState: verifiedJob.state
     })
   ));
 
@@ -1279,7 +1300,7 @@ export async function runDeterministicGoldenPath(): Promise<GoldenPathSimulation
     state: "recorded",
     objectiveId: objective.id,
     taskId: task.id,
-    jobId: succeededJob.id,
+    jobId: verifiedJob.id,
     metric: "deterministic-jobs-completed",
     value: 1,
     evidenceIds: [],
@@ -1386,7 +1407,7 @@ export async function runDeterministicGoldenPath(): Promise<GoldenPathSimulation
     })
   ));
 
-  const ownerJobView = toJobResultView(succeededJob);
+  const ownerJobView = toJobResultView(verifiedJob);
   stages.push(stage(
     "owner-visibility",
     ownerJobView.jobId,
@@ -1431,10 +1452,10 @@ export async function runDeterministicGoldenPath(): Promise<GoldenPathSimulation
   ));
 
   const final = Object.freeze({
-    jobState: succeededJob.state as "succeeded",
+    jobState: verifiedJob.state as "verified",
     outcomeState: verifiedOutcome.state as "verified",
     eventState: processedEvent.state as "processed",
-    ownerVisibleJobState: ownerJobView.state as "succeeded",
+    ownerVisibleJobState: ownerJobView.state as "verified",
     auditEventCount: eventAudit.events.length,
     memoryAuthority: memory.authority as "advisory",
     reservationState: released.reservation.state as "released",

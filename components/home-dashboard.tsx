@@ -1,137 +1,206 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUp, BarChart3, Box, ChevronRight, ClipboardList, Wrench } from "lucide-react";
+import { FileText, Plus, Upload } from "lucide-react";
 import { FormEvent, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Brand } from "@/components/brand";
+import type { ObjectiveView } from "@/lib/types";
 
 function authoritativeRuntime() {
   return process.env.NEXT_PUBLIC_APP_ENV !== "development";
 }
 
-const actions = [
-  { label: "Build something", icon: Box, prompt: "Build something new for the highest-priority company." },
-  { label: "Grow revenue", icon: BarChart3, prompt: "Find the best revenue growth opportunity and make a plan." },
-  { label: "Fix a problem", icon: Wrench, prompt: "Find the most important problem and propose the safest fix." },
-  { label: "Give me an update", icon: ClipboardList, prompt: "Give me an owner update across my companies." }
-] as const;
+function isCompletedToday(objective: ObjectiveView) {
+  if (objective.status !== "completed" || !objective.completedAt) return false;
+  const completed = new Date(objective.completedAt);
+  const now = new Date();
+  return completed.getFullYear() === now.getFullYear()
+    && completed.getMonth() === now.getMonth()
+    && completed.getDate() === now.getDate();
+}
 
-export function HomeDashboard({
-  attentionCount,
-  resourceCount,
-  healthy
-}: {
-  attentionCount: number;
-  resourceCount: number;
-  healthy: boolean;
-}) {
+export function HomeDashboard({ objectives }: { objectives: ObjectiveView[] }) {
+  const router = useRouter();
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const [message, setMessage] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [rawText, setRawText] = useState("");
+  const [source, setSource] = useState<"uploaded_text" | "structured_json" | undefined>();
+  const [fileName, setFileName] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  function choosePrompt(prompt: string) {
-    setMessage(prompt);
-    setNotice(null);
-    requestAnimationFrame(() => inputRef.current?.focus());
+  const running = objectives.filter((objective) =>
+    objective.status === "queued"
+    || objective.status === "planning"
+    || objective.status === "executing"
+    || objective.status === "new_work_required"
+  ).length;
+  const waiting = objectives.filter((objective) =>
+    objective.status === "needs_owner_input"
+  ).length;
+  const completedToday = objectives.filter(isCompletedToday).length;
+  const recent = objectives
+    .filter((objective) => objective.relationship !== "step")
+    .slice(0, 3);
+
+  async function chooseFile(file: File | undefined) {
+    if (!file) return;
+    if (file.size > 100_000) {
+      setNotice("Text/task files must be 100 KB or smaller.");
+      return;
+    }
+    try {
+      const text = await file.text();
+      setRawText(text);
+      setFileName(file.name);
+      setSource(file.name.toLowerCase().endsWith(".json") ? "structured_json" : "uploaded_text");
+      setNotice("Loaded " + file.name + ". Review it, then add the objective.");
+      requestAnimationFrame(() => inputRef.current?.focus());
+    } catch {
+      setNotice("GetDone could not read that text/task file.");
+    }
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const clean = message.trim();
+    const clean = rawText.trim();
     if (!clean || submitting) return;
 
     if (!authoritativeRuntime()) {
-      setNotice("Queued locally for preview: “" + clean + "”");
-      setMessage("");
+      setNotice("Development preview: objective accepted locally. No authoritative record was created.");
+      setRawText("");
+      setSource(undefined);
+      setFileName(undefined);
       return;
     }
 
     setSubmitting(true);
-    setNotice("Sending to GetDone...");
+    setNotice("Adding objective...");
     try {
-      const response = await fetch("/api/control/chat", {
+      const response = await fetch("/api/control/objectives", {
         method: "POST",
         cache: "no-store",
         headers: {
           "content-type": "application/json",
           "idempotency-key": crypto.randomUUID()
         },
-        body: JSON.stringify({ message: clean, channel: "chat" })
+        body: JSON.stringify({
+          rawText: clean,
+          ...(source ? { source } : {}),
+          ...(fileName ? { fileName } : {})
+        })
       });
       const value = await response.json().catch(() => null) as {
         ok?: boolean;
+        data?: Array<{ id: string }>;
         error?: { message?: string };
       } | null;
 
       if (!response.ok || !value?.ok) {
-        throw new Error(value?.error?.message || "GetDone could not accept the request");
+        throw new Error(value?.error?.message || "GetDone could not accept the objective");
       }
 
-      setMessage("");
-      setNotice("Accepted by GetDone.");
+      const count = value.data?.length ?? 1;
+      setRawText("");
+      setSource(undefined);
+      setFileName(undefined);
+      setNotice(count === 1 ? "Objective added. GetDone is taking it from here." : `${count} objectives added from the batch.`);
+      router.refresh();
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "GetDone could not accept the request");
+      setNotice(error instanceof Error ? error.message : "GetDone could not accept the objective");
     } finally {
       setSubmitting(false);
     }
   }
 
-  const statusText = attentionCount > 0
-    ? resourceCount + " resources connected · " + attentionCount + " decisions need attention."
-    : resourceCount + " resources connected · Nothing urgent is waiting.";
-
   return (
-    <section className="ufo-home" aria-label="GetDone owner chat">
-      <div className="ufo-home-brand">
+    <section className="ufo-home ufo-objective-home" aria-label="Objective Inbox">
+      <div className="ufo-home-brand ufo-objective-brand">
         <Brand />
-        <h1 style={{ margin: 0, color: "#d9e3ee", fontSize: "17px", lineHeight: 1.35, fontWeight: 400 }}>
-          How can I move things forward today?
-        </h1>
+        <h1>What do you want done?</h1>
+        <p>Give GetDone the outcome. It handles the machinery.</p>
       </div>
 
-      <form className="ufo-command-card" onSubmit={submit}>
+      <form className="ufo-command-card ufo-objective-composer" onSubmit={submit}>
         <textarea
           ref={inputRef}
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          placeholder="Just tell me what you want..."
-          aria-label="Message GetDone"
+          value={rawText}
+          onChange={(event) => {
+            setRawText(event.target.value);
+            if (!fileName) setSource(undefined);
+          }}
+          placeholder="Fix onboarding. Make safe fixes yourself. Deploy staging automatically. Ask me before production."
+          aria-label="Objective input"
           disabled={submitting}
-          rows={4}
+          rows={6}
         />
-        <button
-          className="ufo-command-send"
-          aria-label={authoritativeRuntime() ? "Send message" : "Send preview message"}
-          type="submit"
-          disabled={submitting || !message.trim()}
-        >
-          <ArrowUp size={22} />
-        </button>
+        <div className="ufo-objective-composer-footer">
+          <input
+            ref={fileRef}
+            type="file"
+            hidden
+            accept=".txt,.md,.task,.json,text/plain,application/json"
+            onChange={(event) => void chooseFile(event.target.files?.[0])}
+          />
+          <button
+            className="ufo-objective-file"
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={submitting}
+            aria-label="Upload text or task file"
+          >
+            <Upload size={16} />
+            <span>{fileName ?? "Text / task file"}</span>
+          </button>
+          <button
+            className="ufo-objective-add"
+            type="submit"
+            disabled={submitting || !rawText.trim()}
+          >
+            <Plus size={17} />
+            <span>Add Objective</span>
+          </button>
+        </div>
       </form>
 
       {notice ? <div className="ufo-home-notice" role="status">{notice}</div> : null}
 
-      <div className="ufo-action-grid" aria-label="Quick actions">
-        {actions.map(({ label, icon: Icon, prompt }) => (
-          <button key={label} type="button" onClick={() => choosePrompt(prompt)}>
-            <Icon size={20} strokeWidth={1.8} />
-            <span>{label}</span>
-          </button>
-        ))}
+      <div className="ufo-objective-stats" aria-label="Objective status">
+        <article><strong>{running}</strong><span>Running</span></article>
+        <article><strong>{waiting}</strong><span>Waiting for you</span></article>
+        <article><strong>{completedToday}</strong><span>Completed today</span></article>
       </div>
 
-      <Link href={attentionCount > 0 ? "/decisions" : "/resources"} className="ufo-working-card">
-        <span className={healthy ? "ufo-live-dot" : "ufo-live-dot ufo-live-dot-warning"} />
-        <span>
-          <strong>GetDone is working for you</strong>
-          <small>{statusText}</small>
-        </span>
-        <ChevronRight size={20} />
-      </Link>
+      <div className="ufo-objective-section-heading">
+        <span>OBJECTIVES</span>
+        {waiting > 0 ? <Link href="/decisions">Open Decision Center</Link> : null}
+      </div>
 
-      <div className="ufo-horizon" aria-hidden="true">
-        <span>IDEAS TODAY.<br />A BRIGHTER TOMORROW.</span>
+      <div className="ufo-objective-list">
+        {recent.length ? recent.map((objective) => (
+          <Link
+            key={objective.id}
+            href={"/objectives/" + encodeURIComponent(objective.id)}
+            className="ufo-objective-row"
+          >
+            <span className={"ufo-objective-state ufo-objective-state-" + objective.status} />
+            <span>
+              <strong>{objective.title}</strong>
+              <small>
+                {objective.status === "needs_owner_input"
+                  ? "Waiting for you"
+                  : objective.status.replaceAll("_", " ")}
+              </small>
+            </span>
+            <FileText size={17} />
+          </Link>
+        )) : (
+          <div className="ufo-empty-attention">
+            <strong>No objectives yet.</strong>
+            <span>Tell GetDone what outcome you want above.</span>
+          </div>
+        )}
       </div>
     </section>
   );

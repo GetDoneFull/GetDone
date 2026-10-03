@@ -2,7 +2,9 @@ import { sha256Hex } from "@/lib/control-plane/canonical-hash";
 import { ControlPlaneError } from "@/lib/control-plane/errors";
 
 export type DurableJobOutcomeKind =
-  | "succeeded"
+  | "provider-completed"
+  | "verified"
+  | "succeeded" // legacy persisted runtime outcome; new code must not emit this
   | "retry-scheduled"
   | "dead-lettered"
   | "cancelled"

@@ -2,6 +2,7 @@ node_modules/
 .next/
 out/
 coverage/
+dist-worker/
 .env
 .env.local
 .env.*.local

@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { sha256Hex } from "@/lib/control-plane/canonical-hash";
+import {
+  createAuthorizationConsumptionRecord,
+  type AuthorizationGrant
+} from "@/lib/authorization/grants";
+import {
+  CAPABILITY_REGISTRY_HASH,
+  CAPABILITY_REGISTRY_VERSION
+} from "@/lib/domain/capabilities";
+import {
+  CURRENT_POLICY_REGISTRY_HASH,
+  CURRENT_POLICY_VERSION
+} from "@/lib/domain/policy-registry";
 import type { JobRecord } from "@/lib/domain/services/job-service";
+import type { TaskRecord } from "@/lib/domain/services/task-service";
+import { POLICY_ENGINE_VERSION, POLICY_RULES_HASH } from "@/lib/planning/policy-engine";
 import type { AuthorizedBusinessActionRequest } from "@/lib/execution/adapters/business-action";
 import { StaticBusinessActionAdapterRegistry } from "@/lib/execution/adapters/business-action-registry";
 import { ConfiguredHttpActionAdapter } from "@/lib/execution/adapters/configured-http-action";
@@ -28,8 +42,68 @@ const scope = {
   environment: "production" as const
 };
 
-function authoritativeJob(id: string, taskId: string, consumptionHash: string): JobRecord {
-  return {
+function authoritativeWork(id: string, taskId: string, capability: string) {
+  const grantBase = {
+    id: `grant-${id}`,
+    status: "active" as const,
+    disposition: "APPROVAL_REQUIRED" as const,
+    scope,
+    planId: `plan-${id}`,
+    planVersion: 1,
+    planHash: `plan-hash-${id}`,
+    stepId: `step-${id}`,
+    stepHash: `step-hash-${id}`,
+    capabilityNames: [capability],
+    executionLimits: {
+      environment: "production" as const,
+      expectedDurationSeconds: 30,
+      retryable: true
+    },
+    validationReceiptId: `validation-${id}`,
+    validationReceiptHash: `validation-hash-${id}`,
+    policySnapshotId: `policy-${id}`,
+    policySnapshotHash: `policy-hash-${id}`,
+    policyVersion: CURRENT_POLICY_VERSION,
+    policyRegistryHash: CURRENT_POLICY_REGISTRY_HASH,
+    policyEngineVersion: POLICY_ENGINE_VERSION,
+    policyRulesHash: POLICY_RULES_HASH,
+    capabilityRegistryVersion: CAPABILITY_REGISTRY_VERSION,
+    capabilityRegistryHash: CAPABILITY_REGISTRY_HASH,
+    decisionId: `decision-${id}`,
+    approvalProofId: `approval-${id}`,
+    approvalProofHash: `approval-hash-${id}`,
+    actor: { type: "user" as const, id: "owner" },
+    issuedAt: "2026-09-22T15:59:00Z",
+    expiresAt: "2099-01-01T00:00:00Z"
+  };
+  const grant: AuthorizationGrant = {
+    ...grantBase,
+    grantHash: sha256Hex(grantBase)
+  };
+  const consumption = createAuthorizationConsumptionRecord({
+    id: `authorization-consumption:${grant.id}`,
+    grant,
+    consumerType: "task",
+    consumerId: taskId,
+    consumedAt: "2026-09-22T15:59:30Z"
+  });
+  const task: TaskRecord = {
+    id: taskId,
+    portfolioId: scope.portfolioId,
+    companyId: scope.companyId,
+    state: "queued",
+    reason: "ordinary integration governed pipeline",
+    evidenceIds: [],
+    capabilityRequirements: [capability],
+    authorizationLineage: [grant.id],
+    authorizationGrantId: grant.id,
+    authorizationGrantHash: grant.grantHash,
+    authorizationConsumption: consumption,
+    verificationEvidenceIds: [],
+    version: 2,
+    updatedAt: "2026-09-22T16:00:00Z"
+  };
+  const job: JobRecord = {
     id,
     portfolioId: scope.portfolioId,
     companyId: scope.companyId,
@@ -37,24 +111,14 @@ function authoritativeJob(id: string, taskId: string, consumptionHash: string): 
     taskId,
     attempt: 0,
     maxAttempts: 5,
-    authorizationGrantId: `grant-${id}`,
-    authorizationGrantHash: `grant-hash-${id}`,
-    authorizationConsumption: {
-      id: `consumption-${id}`,
-      grantId: `grant-${id}`,
-      grantHash: `grant-hash-${id}`,
-      consumerType: "task",
-      consumerId: taskId,
-      scope,
-      planHash: `plan-${id}`,
-      stepHash: `step-${id}`,
-      consumedAt: "2026-09-22T16:00:00Z",
-      consumptionHash
-    },
+    authorizationGrantId: grant.id,
+    authorizationGrantHash: grant.grantHash,
+    authorizationConsumption: consumption,
     verificationEvidenceIds: [],
     version: 2,
     updatedAt: "2026-09-22T16:00:00Z"
   };
+  return { grant, consumption, task, job };
 }
 
 function action(input: {
@@ -140,32 +204,33 @@ describe("ordinary integration governed Job pipeline exit gate", () => {
       now
     });
 
-    const requests = [
-      action({
+    const definitions = [
+      {
         id: "action-http",
         jobId: "job-http",
+        taskId: "task-http",
         capability: "http.request",
         payload: {
           companyId: "company-a",
           operation: "crm.sync",
           payload: { contactId: "contact-1" }
-        },
-        consumptionHash: "consumption-http"
-      }),
-      action({
+        }
+      },
+      {
         id: "action-webhook",
         jobId: "job-webhook",
+        taskId: "task-webhook",
         capability: "webhook.send",
         payload: {
           companyId: "company-a",
           operation: "notify",
           payload: { invoiceId: "inv-1" }
-        },
-        consumptionHash: "consumption-webhook"
-      }),
-      action({
+        }
+      },
+      {
         id: "action-crm",
         jobId: "job-crm",
+        taskId: "task-crm",
         capability: "crm.record.write",
         payload: {
           companyId: "company-a",
@@ -173,12 +238,12 @@ describe("ordinary integration governed Job pipeline exit gate", () => {
           objectType: "contact",
           operation: "create",
           properties: { email: "owner@example.com" }
-        },
-        consumptionHash: "consumption-crm"
-      }),
-      action({
+        }
+      },
+      {
         id: "action-email",
         jobId: "job-email",
+        taskId: "task-email",
         capability: "email.send",
         payload: {
           companyId: "company-a",
@@ -186,17 +251,31 @@ describe("ordinary integration governed Job pipeline exit gate", () => {
           cc: [],
           subject: "Authorized update",
           text: "hello"
-        },
-        consumptionHash: "consumption-email"
-      })
-    ];
+        }
+      }
+    ] as const;
 
-    const jobs = new Map<string, JobRecord>([
-      ["job-http", authoritativeJob("job-http", "task-http", "consumption-http")],
-      ["job-webhook", authoritativeJob("job-webhook", "task-webhook", "consumption-webhook")],
-      ["job-crm", authoritativeJob("job-crm", "task-crm", "consumption-crm")],
-      ["job-email", authoritativeJob("job-email", "task-email", "consumption-email")]
-    ]);
+    const jobs = new Map<string, JobRecord>();
+    const tasks = new Map<string, TaskRecord>();
+    const grants = new Map<string, AuthorizationGrant>();
+    const requests: AuthorizedBusinessActionRequest[] = [];
+    for (const definition of definitions) {
+      const work = authoritativeWork(
+        definition.jobId,
+        definition.taskId,
+        definition.capability
+      );
+      jobs.set(definition.jobId, work.job);
+      tasks.set(definition.taskId, work.task);
+      grants.set(work.grant.id, work.grant);
+      requests.push(action({
+        id: definition.id,
+        jobId: definition.jobId,
+        capability: definition.capability,
+        payload: definition.payload,
+        consumptionHash: work.consumption.consumptionHash
+      }));
+    }
     const specs = new Map<string, PersistedJobExecutionSpec>();
     for (const request of requests) {
       const job = jobs.get(request.jobId)!;
@@ -245,17 +324,55 @@ describe("ordinary integration governed Job pipeline exit gate", () => {
       }
     );
 
+    const transitionJob = (
+      jobId: string,
+      state: JobRecord["state"],
+      patch: Partial<JobRecord> = {}
+    ) => {
+      const current = jobs.get(jobId)!;
+      const next: JobRecord = {
+        ...current,
+        ...patch,
+        state,
+        version: current.version + 1
+      };
+      jobs.set(jobId, next);
+      return next;
+    };
+
     const handler = new RoutedJobExecutionHandler(
       { get: async (jobId) => specs.get(jobId) ?? null, put: async () => undefined },
       orchestrator,
       undefined,
       {
         jobs: { get: async (jobId) => jobs.get(jobId) ?? null },
+        tasks: { get: async (taskId) => tasks.get(taskId) ?? null },
+        grants: { get: async (grantId) => grants.get(grantId) ?? null },
+        admission: { assertAllowed: async () => undefined },
         verificationEvidence: {
           put: async (jobId: string, requestId: string) => {
             evidence.push(`${jobId}:${requestId}`);
           },
           get: async () => null
+        } as never,
+        lifecycle: {
+          claim: async (jobId: string, _command: unknown, workerId: string) =>
+            transitionJob(jobId, "claimed", {
+              workerId,
+              attempt: jobs.get(jobId)!.attempt + 1
+            }),
+          startProviderExecution: async (jobId: string) =>
+            transitionJob(jobId, "executing"),
+          recordProviderCompletion: async (jobId: string) =>
+            transitionJob(jobId, "provider_completed"),
+          retry: async (jobId: string) =>
+            transitionJob(jobId, "queued", { workerId: undefined }),
+          recoverTimeout: async (jobId: string) =>
+            transitionJob(jobId, "queued", { workerId: undefined }),
+          fail: async (jobId: string) =>
+            transitionJob(jobId, "failed"),
+          cancel: async (jobId: string) =>
+            transitionJob(jobId, "cancelled")
         } as never
       }
     );
@@ -290,10 +407,10 @@ describe("ordinary integration governed Job pipeline exit gate", () => {
     }
 
     expect(outcomes).toEqual([
-      { kind: "succeeded" },
-      { kind: "succeeded" },
-      { kind: "succeeded" },
-      { kind: "succeeded" }
+      { kind: "provider-completed" },
+      { kind: "provider-completed" },
+      { kind: "provider-completed" },
+      { kind: "provider-completed" }
     ]);
     expect(evidence).toEqual([
       "job-http:action-http",

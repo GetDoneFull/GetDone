@@ -7,10 +7,16 @@ import {
 } from "@/lib/domain/capabilities";
 
 describe("capability registry", () => {
-  it("keeps high-impact production deployment behind strong approval", () => {
+  it("keeps routine repository work AUTO while production deployment requires approval", () => {
+    expect(requireEnabledCapability("github.branch.create").approval).toBe("auto");
+    expect(requireEnabledCapability("github.commit.create").approval).toBe("auto");
+
     const capability = requireEnabledCapability("production.deploy");
     expect(capability.productionEffect).toBe(true);
-    expect(capability.approval).toBe("strong-approval");
+    expect(capability.approval).toBe("approval");
+
+    expect(requireEnabledCapability("github.protected-branch.commit").approval)
+      .toBe("strong-approval");
   });
 
   it("fails closed for unknown capabilities", () => {

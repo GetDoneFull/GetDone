@@ -84,6 +84,8 @@ export class PostgresJobWorkerInstanceStore {
 
 export interface JobVerificationEvidenceStore {
   put(jobId: string, requestId: string, evidence: VerificationEvidence): Promise<void>;
+  get?(evidenceId: string): Promise<VerificationEvidence | null>;
+  listByJobId?(jobId: string): Promise<readonly VerificationEvidence[]>;
 }
 
 export class PostgresJobVerificationEvidenceStore
@@ -129,6 +131,25 @@ export class PostgresJobVerificationEvidenceStore
       "IDEMPOTENCY_CONFLICT",
       "Verification evidence id was reused with different content"
     );
+  }
+
+  async get(evidenceId: string): Promise<VerificationEvidence | null> {
+    const result = await this.db.query<{ payload: VerificationEvidence }>(
+      "SELECT payload FROM business_action_verification_evidence WHERE evidence_id=$1",
+      [evidenceId]
+    );
+    return result.rows[0]?.payload ?? null;
+  }
+
+  async listByJobId(jobId: string): Promise<readonly VerificationEvidence[]> {
+    const result = await this.db.query<{ payload: VerificationEvidence }>(
+      `SELECT payload
+       FROM business_action_verification_evidence
+       WHERE job_id=$1
+       ORDER BY observed_at,evidence_id`,
+      [jobId]
+    );
+    return Object.freeze(result.rows.map((row) => row.payload));
   }
 }
 

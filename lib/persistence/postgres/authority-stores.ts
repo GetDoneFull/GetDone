@@ -1,5 +1,6 @@
 import type { QueryResultRow } from "pg";
 import { ControlPlaneError } from "@/lib/control-plane/errors";
+import { sha256Hex } from "@/lib/control-plane/canonical-hash";
 import type { AuditEvent, AuditLedger } from "@/lib/domain/audit";
 import type { IdempotencyClaim, IdempotencyRecord, IdempotencyStore } from "@/lib/domain/idempotency";
 import type { TransitionEntity, TransitionEntityStore } from "@/lib/domain/services/transition-service";
@@ -343,12 +344,18 @@ export class PostgresAuthorizationGrantStore implements AuthorizationGrantStore 
   async revoke(id: string, reason: string, revokedAt: string): Promise<void> {
     const current = await this.get(id);
     if (!current) throw new ControlPlaneError("NOT_FOUND", "Authorization grant was not found");
-    const next: AuthorizationGrant = { ...current, status: "revoked" };
+    const { grantHash: _currentGrantHash, ...currentBase } = current;
+    void _currentGrantHash;
+    const nextBase = { ...currentBase, status: "revoked" as const };
+    const next: AuthorizationGrant = {
+      ...nextBase,
+      grantHash: sha256Hex(nextBase)
+    };
     const result = await this.db.query(
       `UPDATE authorization_grants
-       SET status='revoked', revoked_reason=$2, revoked_at=$3, payload=$4::jsonb
+       SET status='revoked', revoked_reason=$2, revoked_at=$3, grant_hash=$4, payload=$5::jsonb
        WHERE id=$1 AND status <> 'revoked'`,
-      [id, reason, revokedAt, JSON.stringify(next)]
+      [id, reason, revokedAt, next.grantHash, JSON.stringify(next)]
     );
     if (result.rowCount !== 1) {
       throw new ControlPlaneError("CONFLICT", "Authorization grant is already revoked");

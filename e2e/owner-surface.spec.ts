@@ -16,17 +16,17 @@ test.describe("existing owner surface", () => {
     expect(headers["strict-transport-security"]).toBeUndefined();
   });
 
-  test("primary Chat / Decisions / Resources navigation stays usable", async ({ page }) => {
+  test("primary Home / Decisions / Resources navigation stays usable", async ({ page }) => {
     await page.goto("/");
 
-    await expect(page.getByRole("heading", { name: /How can I/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /What do you want done/i })).toBeVisible();
     const nav = page.getByRole("navigation", { name: "Primary navigation" });
-    await expect(nav.getByRole("link", { name: "Chat" })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Home" })).toBeVisible();
     await expect(nav.getByRole("link", { name: "Decisions" })).toBeVisible();
     await expect(nav.getByRole("link", { name: "Resources" })).toBeVisible();
 
     await nav.getByRole("link", { name: "Decisions" }).click();
-    await expect(page.getByRole("heading", { name: /Decisions/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Decision Center/ })).toBeVisible();
     await expect(page.getByText("Approve resource addition")).toBeVisible();
 
     await page.getByRole("navigation", { name: "Primary navigation" })
@@ -99,7 +99,7 @@ test.describe("existing owner surface", () => {
       environment: "development",
       data: {
         service: "getdone-control-api",
-        surfaceVersion: "1.4.0",
+        surfaceVersion: "1.5.0",
         status: "unavailable",
         authConnected: false,
         persistenceConnected: false
@@ -114,11 +114,11 @@ test.describe("existing owner surface", () => {
     });
   });
 
-  test("chat and decision controls remain preview-only", async ({ page }) => {
+  test("objective and decision controls remain preview-only", async ({ page }) => {
     await page.goto("/");
-    await page.getByLabel("Message GetDone").fill("Check the current resource state");
-    await page.getByRole("button", { name: "Send preview message" }).click();
-    await expect(page.getByRole("status")).toContainText("Queued locally for preview");
+    await page.getByLabel("Objective input").fill("Check the current resource state");
+    await page.getByRole("button", { name: "Add Objective" }).click();
+    await expect(page.getByRole("status")).toContainText("Development preview: objective accepted locally");
 
     await page.goto("/decisions/approve-dc-west");
     await page.getByRole("button", { name: "Approve" }).click();

@@ -60,7 +60,7 @@ describe("PersistentJobWorkerService", () => {
       },
       runOnce: async () => {
         order.push("run");
-        return [{ jobId: "job-1", outcome: { kind: "succeeded" } }];
+        return [{ jobId: "job-1", outcome: { kind: "provider-completed" } }];
       }
     };
     const instances = new MemoryWorkerInstanceStore();

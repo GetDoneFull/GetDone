@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sha256Hex } from "@/lib/control-plane/canonical-hash";
 import { createCommandEnvelope } from "@/lib/control-plane/command-envelope";
 import type { AuditEvent, AuditLedger } from "@/lib/domain/audit";
 import type { ControlPlaneTransactionManager } from "@/lib/domain/control-plane-transaction";
@@ -184,13 +185,57 @@ describe("Task and Job authoritative lifecycle hardening", () => {
       version: 1
     };
     const store = new MapStore<TaskRecord>([dependency, child]) as MapStore<TaskRecord> & TaskStore;
-    const service = new TaskService(manager<TaskStores>({ tasks: store }), () => fixtureNow);
+    const service = new TaskService(
+      manager<TaskStores>({
+        tasks: store,
+        authorizationGrants: new GrantStore(grant)
+      }),
+      () => fixtureNow
+    );
 
     await expect(service.queue(child.id, command("task.queue.blocked")))
       .rejects.toThrow(/dependency is not authoritatively succeeded/i);
 
     store.values.set(dependency.id, { ...dependency, state: "succeeded" });
     expect((await service.queue(child.id, command("task.queue.ready"))).state).toBe("queued");
+  });
+
+  it("prevents a queued Task from starting after its authorization is revoked", async () => {
+    const grant = autoGrantFor(validPlan());
+    const consumption = authorizedConsumption(grant, "task-revoked");
+    const task: TaskRecord = {
+      id: "task-revoked",
+      portfolioId: "portfolio-a",
+      companyId: "company-a",
+      state: "queued",
+      reason: "must not execute after revocation",
+      evidenceIds: [],
+      capabilityRequirements: [...grant.capabilityNames],
+      authorizationLineage: [grant.id],
+      authorizationGrantId: grant.id,
+      authorizationGrantHash: grant.grantHash,
+      authorizationConsumption: consumption,
+      verificationEvidenceIds: [],
+      version: 2,
+      updatedAt: fixtureNow.toISOString()
+    };
+    const { grantHash: _grantHash, ...grantBase } = grant;
+    const revokedBase = { ...grantBase, status: "revoked" as const };
+    const revoked: AuthorizationGrant = {
+      ...revokedBase,
+      grantHash: sha256Hex(revokedBase)
+    };
+    const store = new MapStore<TaskRecord>([task]) as MapStore<TaskRecord> & TaskStore;
+    const service = new TaskService(
+      manager<TaskStores>({
+        tasks: store,
+        authorizationGrants: new GrantStore(revoked)
+      }),
+      () => fixtureNow
+    );
+
+    await expect(service.start(task.id, command("task.start.revoked")))
+      .rejects.toThrow(/authorization is missing|differs|not active/i);
   });
 
   it("bounds Task retry and recovers a timed-out running Task without losing authority", async () => {
@@ -214,7 +259,13 @@ describe("Task and Job authoritative lifecycle hardening", () => {
       version: 3,
       updatedAt: fixtureNow.toISOString()
     }]) as MapStore<TaskRecord> & TaskStore;
-    const service = new TaskService(manager<TaskStores>({ tasks: store }), () => fixtureNow);
+    const service = new TaskService(
+      manager<TaskStores>({
+        tasks: store,
+        authorizationGrants: new GrantStore(grant)
+      }),
+      () => fixtureNow
+    );
 
     const recovered = await service.recoverTimeout(
       "task-retry",

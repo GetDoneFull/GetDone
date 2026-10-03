@@ -1,6 +1,6 @@
 {
   "registrySchemaVersion": "1.6.0",
-  "registryVersion": "2026-09-24.5",
+  "registryVersion": "2026-09-28.6",
   "appVersion": "0.1.0",
   "schemaVersions": {
     "controlApi": {
@@ -8,7 +8,7 @@
       "sourcePath": "lib/control-plane/schemas.ts"
     },
     "capabilityRegistry": {
-      "version": "1.2.0",
+      "version": "1.3.0",
       "sourcePath": "lib/domain/capabilities.ts"
     },
     "planSchema": {
@@ -20,7 +20,7 @@
       "sourcePath": "lib/domain/resources.ts"
     },
     "verification": {
-      "version": "1.1.0",
+      "version": "1.2.0",
       "sourcePath": "lib/verification/verification.ts"
     },
     "verificationSourceTrust": {
@@ -80,7 +80,7 @@
       ]
     },
     "integrationRegistry": {
-      "version": "1.0.0",
+      "version": "1.1.0",
       "sourcePath": "lib/integrations/contracts.ts",
       "contractTracked": true,
       "contractSourcePaths": [
@@ -88,7 +88,7 @@
       ]
     },
     "jobRuntime": {
-      "version": "1.2.0",
+      "version": "1.3.0",
       "sourcePath": "lib/execution/job-runtime-contracts.ts",
       "contractTracked": true,
       "contractSourcePaths": [
@@ -152,7 +152,7 @@
       ]
     },
     "goldenPathHarness": {
-      "version": "1.1.0",
+      "version": "1.2.0",
       "sourcePath": "lib/composition/golden-path-harness.ts",
       "contractTracked": true,
       "contractSourcePaths": [
@@ -168,7 +168,7 @@
       ]
     },
     "controlApiSurface": {
-      "version": "1.4.0",
+      "version": "1.5.0",
       "sourcePath": "lib/control-api/contracts.ts",
       "contractTracked": true,
       "contractSourcePaths": [
@@ -180,7 +180,7 @@
       "sourcePath": "lib/persistence/postgres/client.ts"
     },
     "jobWorkerRuntime": {
-      "version": "1.0.0",
+      "version": "1.1.0",
       "sourcePath": "lib/execution/job-worker-runtime.ts"
     },
     "businessActionOrchestrator": {
@@ -192,7 +192,7 @@
       "sourcePath": "lib/execution/software-worker-runtime.ts"
     },
     "jobExecutionRouter": {
-      "version": "1.1.0",
+      "version": "1.2.0",
       "sourcePath": "lib/execution/job-execution-router.ts"
     },
     "nodeDomain": {
@@ -248,7 +248,7 @@
       ]
     },
     "zeroDowntimeMigrationPolicy": {
-      "version": "1.0.0",
+      "version": "1.1.0",
       "sourcePath": "config/zero-downtime-migration-policy.json",
       "contractTracked": true,
       "contractSourcePaths": [
@@ -284,12 +284,88 @@
         "lib/execution/adapters/analytics-ingestion.ts",
         "lib/persistence/postgres/analytics-ingestion-store.ts"
       ]
+    },
+    "orchestrationContract": {
+      "version": "1.2.0",
+      "sourcePath": "lib/orchestration/contracts.ts",
+      "contractTracked": true,
+      "contractSourcePaths": [
+        "lib/orchestration/contracts.ts"
+      ]
+    },
+    "orchestrationWorkerContract": {
+      "version": "1.1.0",
+      "sourcePath": "lib/orchestration/worker-contracts.ts",
+      "contractTracked": true,
+      "contractSourcePaths": [
+        "lib/orchestration/worker-contracts.ts",
+        "lib/orchestration/worker-runtime.ts",
+        "lib/orchestration/persistent-worker.server.ts",
+        "lib/orchestration/worker-process.server.ts",
+        "lib/persistence/postgres/orchestration-worker-store.ts",
+        "lib/persistence/postgres/orchestration-worker-registry.ts",
+        "lib/orchestration/runtime.server.ts",
+        "lib/orchestration/stage-router.ts"
+      ]
+    },
+    "orchestrationTaskJobMaterialization": {
+      "version": "1.0.0",
+      "sourcePath": "lib/orchestration/task-job-materialization.ts",
+      "contractTracked": true,
+      "contractSourcePaths": [
+        "lib/orchestration/task-job-materialization.ts"
+      ]
+    },
+    "authoritativeExecutionPath": {
+      "version": "1.0.0",
+      "sourcePath": "lib/orchestration/post-authorization-flow.ts",
+      "contractTracked": true,
+      "contractSourcePaths": [
+        "lib/orchestration/authoritative-execution-coordinator.ts",
+        "lib/orchestration/objective-flow.ts",
+        "lib/orchestration/post-authorization-flow.ts"
+      ]
+    },
+    "coreTrancheCCoordinator": {
+      "version": "1.0.0",
+      "sourcePath": "lib/domain/services/core-tranche-c-coordinator.ts",
+      "contractTracked": true,
+      "contractSourcePaths": [
+        "lib/domain/services/core-tranche-c-coordinator.ts"
+      ]
+    },
+    "ownerExplainability": {
+      "version": "1.0.0",
+      "sourcePath": "lib/explainability/job-owner-explanation.ts",
+      "contractTracked": true,
+      "contractSourcePaths": [
+        "lib/explainability/job-owner-explanation.ts"
+      ]
+    },
+    "confirmedPreferenceLearning": {
+      "version": "1.0.0",
+      "sourcePath": "lib/domain/preference-learning.ts",
+      "contractTracked": true,
+      "contractSourcePaths": [
+        "lib/domain/preference-learning.ts",
+        "lib/planning/policy-engine.ts",
+        "lib/planning/policy-snapshot.ts"
+      ]
+    },
+    "deterministicPolicyEngine": {
+      "version": "1.0.0",
+      "sourcePath": "lib/planning/policy-engine.ts",
+      "contractTracked": true,
+      "contractSourcePaths": [
+        "lib/planning/policy-engine.ts",
+        "lib/domain/policy-registry.ts"
+      ]
     }
   },
   "policy": {
     "registryVersion": "2026-09-21.1",
     "registrySourcePath": "lib/domain/policy-registry.ts",
-    "engineVersion": "2026-09-20.2",
+    "engineVersion": "2026-09-28.1",
     "engineSourcePath": "lib/planning/policy-engine.ts"
   },
   "aiGateway": {
@@ -348,7 +424,7 @@
     },
     "integration": {
       "status": "contract-only",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "sourcePath": "lib/integrations/contracts.ts",
       "contractTracked": true,
       "contractSourcePaths": [
@@ -629,7 +705,28 @@
     "lib/analytics/ingestion.ts",
     "lib/analytics/analytics-ingestion-postgres.integration.test.ts",
     "lib/persistence/postgres/analytics-ingestion-store.ts",
-    "migrations/2026-09-25.3_analytics_ingestion.sql"
+    "migrations/2026-09-25.3_analytics_ingestion.sql",
+    "lib/orchestration/contracts.test.ts",
+    "lib/orchestration/worker-contracts.test.ts",
+    "lib/orchestration/worker-runtime.test.ts",
+    "lib/orchestration/owner-intent-flow.test.ts",
+    "lib/orchestration/planning-flow.test.ts",
+    "lib/orchestration/ai-gateway-planner.test.ts",
+    "lib/orchestration/validation-policy-flow.test.ts",
+    "lib/orchestration/authorization-flow.test.ts",
+    "lib/persistence/postgres/orchestration-store.integration.test.ts",
+    "lib/persistence/postgres/orchestration-worker-store.integration.test.ts",
+    "lib/persistence/postgres/owner-intent-orchestration.integration.test.ts",
+    "lib/persistence/postgres/orchestration-planning.integration.test.ts",
+    "lib/persistence/postgres/orchestration-validation-policy.integration.test.ts",
+    "lib/persistence/postgres/orchestration-authorization.integration.test.ts",
+    "lib/orchestration/persistent-worker.server.test.ts",
+    "lib/orchestration/worker-process.server.test.ts",
+    "lib/persistence/postgres/orchestration-crash-matrix.integration.test.ts",
+    "lib/orchestration/stage-router.test.ts",
+    "docs/CORE_TRANCHE_B_DURABLE_ORCHESTRATION_WORKER.md",
+    "lib/orchestration/task-job-materialization.test.ts",
+    "lib/persistence/postgres/orchestration-task-job-store.test.ts"
   ],
   "manualSourcePaths": [
     "docs/ARCHITECTURE.md",
@@ -663,7 +760,7 @@
     "minimumEngineVersion": "16",
     "migrationVersion": "2026-09-25.3",
     "schemaVersion": "2.2.0",
-    "sourcePath": "migrations/2026-09-25.3_analytics_ingestion.sql",
+    "sourcePath": "migrations/2026-09-28.6_ufo_authorization.sql",
     "adapterSourcePath": "lib/persistence/postgres/client.ts"
   },
   "voice": {
@@ -760,7 +857,7 @@
     "mvpBusinessWorkflowSourcePath": "lib/composition/mvp-business-workflow.ts"
   },
   "controlApi": {
-    "surfaceVersion": "1.4.0",
+    "surfaceVersion": "1.5.0",
     "status": "implemented-unconnected",
     "applicationAdapterStatus": "not-connected",
     "authStatus": "implemented-unconnected",
@@ -898,5 +995,14 @@
     "stagingWorkflow": ".github/workflows/browser-staging-acceptance.yml",
     "authoritativePostgres": true,
     "virtualWebAuthn": true
+  },
+  "preferenceLearning": {
+    "version": "1.0.0",
+    "status": "implemented-unconfigured",
+    "persistenceBackend": "postgresql",
+    "minimumApprovalObservations": 3,
+    "ownerConfirmationRequired": true,
+    "policyAuthorityMode": "explicit-confirmation-only",
+    "sourcePath": "lib/domain/preference-learning.ts"
   }
 }

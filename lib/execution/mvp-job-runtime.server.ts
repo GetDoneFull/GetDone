@@ -7,11 +7,13 @@ import { sha256Hex } from "@/lib/control-plane/canonical-hash";
 import { ControlPlaneError } from "@/lib/control-plane/errors";
 import { assertTrustedExecutionScopeEqual } from "@/lib/control-plane/trusted-execution-scope";
 import { validateCapabilityInput } from "@/lib/domain/capabilities";
-import type { JobRecord } from "@/lib/domain/services/job-service";
+import { JobService, type JobRecord, type JobStores } from "@/lib/domain/services/job-service";
+import type { TaskRecord } from "@/lib/domain/services/task-service";
 import type { AuthorizedBusinessActionRequest } from "@/lib/execution/adapters/business-action";
 import { StaticBusinessActionAdapterRegistry } from "@/lib/execution/adapters/business-action-registry";
 import { createOrdinaryBusinessActionBindingsFromEnv } from "@/lib/execution/adapters/ordinary-integration-registry";
 import { BusinessActionExecutionOrchestrator } from "@/lib/execution/business-action-orchestrator";
+import { PostgresCurrentExecutionAdmissionGate } from "@/lib/execution/current-execution-admission";
 import {
   PostgresProviderConcurrencyGate,
   readProviderConcurrencyConfigFromEnv
@@ -22,12 +24,19 @@ import {
   RoutedJobExecutionHandler
 } from "@/lib/execution/job-execution-router";
 import { createJobQueueEnvelope } from "@/lib/execution/job-runtime-contracts";
+import { jobSideEffectIdempotencyKey } from "@/lib/orchestration/execution-idempotency";
 import { planOwnerNotification } from "@/lib/mobile/notifications";
 import { PostgresBusinessActionExecutionStore } from "@/lib/persistence/postgres/execution-stores";
 import { PostgresAnalyticsIngestionStore } from "@/lib/persistence/postgres/analytics-ingestion-store";
 import { PostgresCredentialBrokerStore } from "@/lib/persistence/postgres/credential-broker-store";
 import { PostgresJobExecutionSpecStore } from "@/lib/persistence/postgres/job-execution-spec-store";
-import { PostgresEntityStore } from "@/lib/persistence/postgres/authority-stores";
+import {
+  PostgresAuthorizationGrantStore,
+  PostgresEntityStore,
+  PostgresJobExecutionBridgeStore,
+  PostgresVerificationReceiptStore
+} from "@/lib/persistence/postgres/authority-stores";
+import { PostgresControlPlaneTransactionManager } from "@/lib/persistence/postgres/transaction-manager";
 import { PostgresJobVerificationEvidenceStore } from "@/lib/persistence/postgres/worker-runtime-stores";
 import { getPostgresRuntimeFromEnv } from "@/lib/persistence/postgres/runtime.server";
 import { runWithPostgresTenantScope } from "@/lib/persistence/postgres/tenant-context.server";
@@ -117,7 +126,11 @@ export class MvpJobRuntime {
         "Production governed Job execution requires persisted correlation lineage"
       );
     }
-    const correlatedRequest = Object.freeze({ ...request, correlationId });
+    const correlatedRequest = Object.freeze({
+      ...request,
+      correlationId,
+      idempotencyKey: jobSideEffectIdempotencyKey(authoritative.id, request.id)
+    });
     const createdAt = this.now().toISOString();
     const spec = createPersistedJobExecutionSpec({
       kind: "business-action",
@@ -134,7 +147,7 @@ export class MvpJobRuntime {
       taskId: authoritative.taskId,
       scope: request.scope,
       authorizationConsumptionHash: request.authorizationConsumptionHash,
-      idempotencyKey: `queue:${request.idempotencyKey}`,
+      idempotencyKey: `queue:${correlatedRequest.idempotencyKey}`,
       scheduledAt: createdAt,
       createdAt
     }));
@@ -157,16 +170,58 @@ export class MvpJobRuntime {
 
   async ownerView(jobId: string, taskId: string) {
     const status = await this.engine.status(jobId);
-    const terminal = status.outcomes.at(-1);
+    const runtimeScope = status.runtime?.envelope?.scope;
+    const authoritative = runtimeScope
+      ? await runWithPostgresTenantScope(
+          runtimeScope,
+          () => this.jobs.get(jobId)
+        )
+      : null;
+
+    if (authoritative && authoritative.taskId !== taskId) {
+      throw new ControlPlaneError(
+        "FORBIDDEN",
+        "Owner Job view task does not match the authoritative Job lineage"
+      );
+    }
+
+    const latest = status.outcomes.at(-1);
+    const durableTerminal = latest
+      && ["verified", "dead-lettered", "cancelled", "succeeded"].includes(latest.kind)
+      ? latest
+      : undefined;
+    const authoritativeTerminal = authoritative
+      && ["verified", "succeeded", "failed", "cancelled"].includes(authoritative.state)
+      ? authoritative
+      : undefined;
+
+    const notification = authoritativeTerminal
+      ? planOwnerNotification({
+          id: `job-authoritative:${sha256Hex({
+            id: authoritativeTerminal.id,
+            state: authoritativeTerminal.state,
+            version: authoritativeTerminal.version,
+            verificationReceiptHash: authoritativeTerminal.verificationReceiptHash
+          })}`,
+          attention: authoritativeTerminal.state === "failed" ? "high" : "fyi",
+          target: { kind: "task-result", taskId: authoritativeTerminal.taskId },
+          sensitive: true
+        })
+      : durableTerminal
+        ? planOwnerNotification({
+            id: `job-outcome:${durableTerminal.recordHash}`,
+            attention: durableTerminal.kind === "dead-lettered" ? "high" : "fyi",
+            target: { kind: "task-result", taskId },
+            sensitive: true
+          })
+        : null;
+
     return Object.freeze({
-      correlationId: status.runtime?.envelope?.correlationId,
+      correlationId:
+        authoritative?.correlationId
+        ?? status.runtime?.envelope?.correlationId,
       status,
-      notification: terminal ? planOwnerNotification({
-        id: `job-outcome:${terminal.recordHash}`,
-        attention: terminal.kind === "dead-lettered" ? "high" : "fyi",
-        target: { kind: "task-result", taskId },
-        sensitive: true
-      }) : null
+      notification
     });
   }
 }
@@ -204,6 +259,19 @@ export function getMvpJobRuntimeFromEnv(
   );
   const specs = new PostgresJobExecutionSpecStore(database);
   const jobs = new PostgresEntityStore<JobRecord>(database, "job");
+  const tasks = new PostgresEntityStore<TaskRecord>(database, "task");
+  const grants = new PostgresAuthorizationGrantStore(database);
+  const jobLifecycle = new JobService(
+    new PostgresControlPlaneTransactionManager<JobStores>(
+      database,
+      (client) => ({
+        jobs: new PostgresEntityStore<JobRecord>(client, "job"),
+        authorizationGrants: new PostgresAuthorizationGrantStore(client),
+        verificationReceipts: new PostgresVerificationReceiptStore(client),
+        executionBridge: new PostgresJobExecutionBridgeStore(client)
+      })
+    )
+  );
   installed = new MvpJobRuntime(
     getDurableJobEngineFromEnv(env),
     specs,
@@ -213,7 +281,11 @@ export function getMvpJobRuntimeFromEnv(
       undefined,
       {
         jobs,
-        verificationEvidence: new PostgresJobVerificationEvidenceStore(database)
+        tasks,
+        grants,
+        admission: new PostgresCurrentExecutionAdmissionGate(database),
+        verificationEvidence: new PostgresJobVerificationEvidenceStore(database),
+        lifecycle: jobLifecycle
       }
     ),
     jobs

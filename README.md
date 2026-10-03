@@ -1,6 +1,6 @@
 # GetDone — UFO v2
 
-GetDone is an iPhone-first owner control surface for a governed autonomous execution system. The permanent owner navigation remains intentionally small: **Chat · Decisions · Resources**.
+GetDone is an iPhone-first owner control surface for a governed autonomous execution system. The permanent owner navigation remains intentionally small: **Home · Decisions · Resources**. Home is the Objective Inbox: owners describe desired outcomes while Tasks, Jobs, provider execution, and verification stay behind the control-plane boundary.
 
 The repository is now substantially beyond the original Phase 1 visual scaffold. It contains the mobile owner surface plus a deterministic control-plane foundation for scope, capability, planning, policy, authorization, verification, operational memory, resource registry, and resource enrollment.
 
@@ -14,8 +14,8 @@ The frontend, AI providers, workers, resource agents, callbacks, and infrastruct
 
 Current code includes:
 
-- iPhone-first Chat / Decisions / Resources owner surface
-- Control API 1.0 HTTP/application-adapter surface for owner intents, Decisions, Resources/discovery, governed Resource Enrollment, Jobs/results, Verification, and health; default runtime fails closed until authoritative auth/persistence adapters are installed
+- iPhone-first Home / Decisions / Resources owner surface, with Home as the Objective Inbox and Decisions as the owner-attention queue
+- Control API 1.5 HTTP/application-adapter surface for Objective intake/reads, owner intents, Decisions, Resources/discovery, governed Resource Enrollment, Jobs/results, Verification, and health; default runtime fails closed until authoritative auth/persistence adapters are installed
 - trusted execution scope and tenant tampering guards
 - authentication/session/step-up contracts
 - capability registry with runtime input/output schemas
@@ -105,8 +105,9 @@ npm run verify:release
 
 ## Current owner routes
 
-- `/` — Home / Chat shell
-- `/decisions` — unified decision queue
+- `/` — Home / Objective Inbox
+- `/objectives/[id]` — outcome-first Objective detail without Task/Job machinery
+- `/decisions` — owner-level Decision Center / human-attention queue
 - `/decisions/[id]` — development decision detail
 - `/resources` — resource overview
 - `/resources/add` — add-resource visual flow

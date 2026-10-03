@@ -6,6 +6,7 @@ import type { ApiEnvelope } from "@/lib/control-plane/schemas";
 import { developmentSeedAllowed } from "@/lib/control-plane/runtime-environment";
 import type { AuthoritativeDecision } from "@/lib/domain/decision-service";
 import type { Resource as AuthoritativeResource } from "@/lib/domain/resources";
+import type { ObjectiveRecord } from "@/lib/domain/objective-inbox";
 import {
   developmentOwnerRepository,
   type OwnerReadRepository,
@@ -14,12 +15,14 @@ import {
 import type {
   Decision,
   DecisionPriority,
+  ObjectiveView,
   Resource
 } from "@/lib/types";
 
 type DecisionPresentation = Partial<Pick<
   Decision,
   "title" | "subtitle" | "priority" | "category" | "rationale" | "impact"
+  | "objectiveId" | "actionLabel" | "evidence" | "blastRadius"
 >>;
 
 type ResourcePresentation = Partial<Pick<
@@ -87,7 +90,30 @@ function toDecision(value: AuthoritativeDecision): Decision {
       ?? "Authoritative GetDone decision loaded from the scoped Control API.",
     impact: presentation.impact?.length
       ? [...presentation.impact]
-      : ["Mutation is scope-bound, idempotent, audited, and persisted."]
+      : ["Mutation is scope-bound, idempotent, audited, and persisted."],
+    objectiveId: presentation.objectiveId,
+    actionLabel: presentation.actionLabel,
+    evidence: presentation.evidence?.length ? [...presentation.evidence] : undefined,
+    blastRadius: presentation.blastRadius
+  };
+}
+
+function toObjective(value: ObjectiveRecord): ObjectiveView {
+  return {
+    id: value.id,
+    title: value.normalizedGoal,
+    desiredOutcome: value.desiredOutcome,
+    status: value.status,
+    priority: value.priority,
+    riskLevel: value.riskLevel,
+    constraints: [...value.constraints],
+    successCriteria: [...value.successCriteria],
+    relationship: value.relationship,
+    parentObjectiveId: value.parentObjectiveId,
+    dependsOnObjectiveIds: [...value.dependsOnObjectiveIds],
+    progress: value.progress.map((item) => ({ ...item })),
+    createdAt: value.createdAt,
+    completedAt: value.completedAt
   };
 }
 
@@ -195,6 +221,19 @@ async function controlGet<T>(path: string): Promise<T> {
 }
 
 const controlApiOwnerRepository: OwnerReadRepository = {
+  async listObjectives() {
+    return (await controlGet<ObjectiveRecord[]>("/api/control/objectives")).map(toObjective);
+  },
+  async getObjective(id) {
+    try {
+      return toObjective(
+        await controlGet<ObjectiveRecord>(`/api/control/objectives/${encodeURIComponent(id)}`)
+      );
+    } catch (error) {
+      if (error instanceof ControlPlaneError && error.code === "NOT_FOUND") return null;
+      throw error;
+    }
+  },
   async listDecisions() {
     return (await controlGet<AuthoritativeDecision[]>("/api/control/decisions")).map(toDecision);
   },

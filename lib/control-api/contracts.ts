@@ -7,8 +7,19 @@ import type { JobRecord } from "@/lib/domain/services/job-service";
 import type { VerificationRequestRecord } from "@/lib/domain/services/verification-service";
 import type { Resource } from "@/lib/domain/resources";
 import type { ResourceEnrollmentRecord } from "@/lib/resources/enrollment";
+import type {
+  OwnerFailurePresentation,
+  OwnerOperationExplanation
+} from "@/lib/explainability/job-owner-explanation";
+import type { ObjectiveIntakeInput, ObjectiveRecord } from "@/lib/domain/objective-inbox";
+import type {
+  ConfirmedPreferenceRule,
+  LearnedRuleSuggestion,
+  PreferenceSuggestionResolution,
+  PreferenceSuggestionResolutionResult
+} from "@/lib/domain/preference-learning";
 
-export const CONTROL_API_SURFACE_VERSION = "1.4.0";
+export const CONTROL_API_SURFACE_VERSION = "1.6.0";
 
 export type ControlApiRole = "owner" | "admin" | "operator" | "viewer";
 
@@ -106,7 +117,10 @@ export interface JobResultView {
   verificationReceiptHash?: string;
   verifiedCompletionFactId?: string;
   verifiedCompletionFactHash?: string;
+  /** Owner-safe interpreted failure summary; raw provider errors remain internal. */
   failureReason?: string;
+  explanation: OwnerOperationExplanation;
+  failure?: OwnerFailurePresentation;
 }
 
 export interface StepUpSessionView {
@@ -161,6 +175,28 @@ export interface ControlApiApplicationAdapter {
     idempotencyKey: string,
     correlationId?: string
   ): Promise<OwnerIntentRecord>;
+
+  submitObjectives(
+    principal: ControlApiPrincipal,
+    input: ObjectiveIntakeInput,
+    idempotencyKey: string,
+    correlationId?: string
+  ): Promise<readonly ObjectiveRecord[]>;
+  listObjectives(principal: ControlApiPrincipal): Promise<readonly ObjectiveRecord[]>;
+  getObjective(principal: ControlApiPrincipal, objectiveId: string): Promise<ObjectiveRecord | null>;
+
+  listPreferenceSuggestions(
+    principal: ControlApiPrincipal
+  ): Promise<readonly LearnedRuleSuggestion[]>;
+  resolvePreferenceSuggestion(
+    principal: ControlApiPrincipal,
+    suggestionId: string,
+    action: PreferenceSuggestionResolution
+  ): Promise<PreferenceSuggestionResolutionResult>;
+  listConfirmedPreferenceRules(
+    principal: ControlApiPrincipal,
+    capability: string
+  ): Promise<readonly ConfirmedPreferenceRule[]>;
 
   listDecisions(principal: ControlApiPrincipal): Promise<readonly AuthoritativeDecision[]>;
   getDecision(principal: ControlApiPrincipal, decisionId: string): Promise<AuthoritativeDecision | null>;

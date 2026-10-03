@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { CircleCheckBig, MessageCircle, Server } from "lucide-react";
+import { CircleCheckBig, House, Server } from "lucide-react";
 import { usePathname } from "next/navigation";
 
 const items = [
-  { href: "/", label: "Chat", icon: MessageCircle },
+  { href: "/", label: "Home", icon: House },
   { href: "/decisions", label: "Decisions", icon: CircleCheckBig },
   { href: "/resources", label: "Resources", icon: Server }
 ] as const;

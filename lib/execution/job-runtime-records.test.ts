@@ -9,7 +9,7 @@ describe("durable Job outcome and event records", () => {
     const outcome = createDurableJobExecutionOutcome({
       id: "outcome-1",
       jobId: "job-1",
-      kind: "succeeded",
+      kind: "provider-completed",
       runtimeState: "released",
       attempt: 1,
       occurredAt: "2026-09-21T23:00:00Z",
@@ -19,7 +19,7 @@ describe("durable Job outcome and event records", () => {
     expect(outcome.recordHash).toHaveLength(64);
     expect(outcome).toMatchObject({
       jobId: "job-1",
-      kind: "succeeded",
+      kind: "provider-completed",
       runtimeState: "released",
       attempt: 1
     });
@@ -75,7 +75,7 @@ describe("durable Job outcome and event records", () => {
     const outcome = createDurableJobExecutionOutcome({
       id: "outcome-3",
       jobId: "job-a",
-      kind: "succeeded",
+      kind: "provider-completed",
       runtimeState: "released",
       attempt: 1,
       occurredAt: "2026-09-21T23:00:00Z",
@@ -84,7 +84,7 @@ describe("durable Job outcome and event records", () => {
     expect(() => createDurableJobRuntimeEvent({
       id: "event-3",
       jobId: "job-b",
-      eventType: "job.execution-succeeded",
+      eventType: "job.provider-completed",
       attempt: 1,
       occurredAt: "2026-09-21T23:00:00Z",
       transactionHash: "tx-3",

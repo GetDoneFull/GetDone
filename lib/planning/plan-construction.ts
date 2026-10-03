@@ -39,8 +39,9 @@ export function constructPlanProposal(input: {
   if (
     plan.scope.portfolioId !== input.request.scope.portfolioId
     || plan.scope.companyId !== input.request.scope.companyId
+    || plan.scope.environment !== input.request.environment
   ) {
-    throw new ControlPlaneError("FORBIDDEN", "Proposed plan scope does not match server-authorized scope", {
+    throw new ControlPlaneError("FORBIDDEN", "Proposed plan scope/environment does not match server-authorized request", {
       correlationId: input.request.correlationId
     });
   }

@@ -1,4 +1,4 @@
-import type { Decision, Resource } from "./types";
+import type { Decision, ObjectiveView, Resource } from "./types";
 
 export const resourceSummary = {
   health: "Healthy",
@@ -112,6 +112,72 @@ export const resources: Resource[] = [
   }
 ];
 
+export const objectives: ObjectiveView[] = [
+  {
+    id: "objective-onboarding",
+    title: "Improve OpsManagerPro onboarding",
+    desiredOutcome: "New users complete onboarding successfully on the verified production build.",
+    status: "needs_owner_input",
+    priority: "high",
+    riskLevel: "high",
+    constraints: [
+      "Make safe fixes automatically",
+      "Deploy and verify staging automatically",
+      "Ask the owner before production"
+    ],
+    successCriteria: [
+      "Signup funnel issue reproduced",
+      "Automated tests pass",
+      "Staging deployment is verified",
+      "Production requires explicit owner approval"
+    ],
+    relationship: "independent",
+    dependsOnObjectiveIds: [],
+    progress: [
+      { label: "Investigated signup funnel", status: "done", verified: true },
+      { label: "Reproduced frontend bug", status: "done", verified: true },
+      { label: "Generated patch", status: "done", verified: true },
+      { label: "Tests passed", status: "done", verified: true },
+      { label: "Staging deployed", status: "done", verified: true },
+      { label: "Staging verified", status: "done", verified: true },
+      { label: "Production release needs your approval", status: "waiting" }
+    ],
+    createdAt: "2026-09-28T15:00:00.000Z"
+  },
+  {
+    id: "objective-growth",
+    title: "Increase qualified warehouse trials",
+    desiredOutcome: "Increase qualified OpsManagerPro trials without raising unsafe spend.",
+    status: "executing",
+    priority: "normal",
+    riskLevel: "medium",
+    constraints: ["Stay inside approved outreach and budget policy"],
+    successCriteria: ["Qualified trial trend improves"],
+    relationship: "independent",
+    dependsOnObjectiveIds: [],
+    progress: [
+      { label: "Analyzed current acquisition funnel", status: "done", verified: true },
+      { label: "Running approved outreach experiment", status: "running" }
+    ],
+    createdAt: "2026-09-28T14:00:00.000Z"
+  },
+  {
+    id: "objective-completed-today",
+    title: "Verify StatusWatchPro monitor health",
+    desiredOutcome: "All production monitors report verified healthy state.",
+    status: "completed",
+    priority: "normal",
+    riskLevel: "low",
+    constraints: [],
+    successCriteria: ["Monitor health verified"],
+    relationship: "independent",
+    dependsOnObjectiveIds: [],
+    progress: [{ label: "Production monitors verified healthy", status: "done", verified: true }],
+    createdAt: "2026-09-28T12:00:00.000Z",
+    completedAt: "2026-09-28T16:30:00.000Z"
+  }
+];
+
 export const decisions: Decision[] = [
   {
     id: "approve-dc-west",
@@ -126,14 +192,18 @@ export const decisions: Decision[] = [
   },
   {
     id: "landing-page",
-    title: "Deploy new landing page",
-    subtitle: "+18% projected signups",
+    title: "Release OpsManagerPro onboarding fix?",
+    subtitle: "Verified staging build is ready for production",
     priority: "high",
     age: "4h ago",
     category: "growth",
     status: "pending",
-    rationale: "Seeded development decision used to demonstrate the unified approval queue.",
-    impact: ["Preview-only recommendation", "Would require deployment verification later"]
+    rationale: "The objective allowed safe fixes and staging deployment automatically, but production release was explicitly reserved for owner approval.",
+    impact: ["7 files changed", "42 tests passed", "Staging verification passed"],
+    objectiveId: "objective-onboarding",
+    actionLabel: "Approve Production",
+    evidence: ["7 files changed", "42 tests passed", "Staging verification passed", "No schema migration", "Rollback available"],
+    blastRadius: "Onboarding flow"
   },
   {
     id: "production-error",
@@ -198,4 +268,8 @@ export function getResource(id: string) {
 
 export function getDecision(id: string) {
   return decisions.find((decision) => decision.id === id);
+}
+
+export function getObjective(id: string) {
+  return objectives.find((objective) => objective.id === id);
 }

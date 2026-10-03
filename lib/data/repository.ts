@@ -1,7 +1,7 @@
 import { ControlPlaneError } from "@/lib/control-plane/errors";
 import { developmentSeedAllowed } from "@/lib/control-plane/runtime-environment";
-import { decisions, getDecision, getResource, resourceSummary, resources } from "@/lib/mock-data";
-import type { Decision, Resource } from "@/lib/types";
+import { decisions, getDecision, getObjective, getResource, objectives, resourceSummary, resources } from "@/lib/mock-data";
+import type { Decision, ObjectiveView, Resource } from "@/lib/types";
 
 export interface OwnerResourceSummary {
   health: string;
@@ -13,6 +13,8 @@ export interface OwnerResourceSummary {
 }
 
 export interface OwnerReadRepository {
+  listObjectives(): Promise<readonly ObjectiveView[]>;
+  getObjective(id: string): Promise<ObjectiveView | null>;
   listDecisions(): Promise<readonly Decision[]>;
   getDecision(id: string): Promise<Decision | null>;
   listResources(): Promise<readonly Resource[]>;
@@ -35,6 +37,14 @@ function assertDevelopmentSeedAllowed() {
 }
 
 export const developmentOwnerRepository: OwnerReadRepository = {
+  async listObjectives() {
+    assertDevelopmentSeedAllowed();
+    return objectives;
+  },
+  async getObjective(id) {
+    assertDevelopmentSeedAllowed();
+    return getObjective(id) ?? null;
+  },
   async listDecisions() {
     assertDevelopmentSeedAllowed();
     return decisions;

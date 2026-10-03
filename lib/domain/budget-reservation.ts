@@ -59,6 +59,7 @@ export function assertBudgetReservation(input: {
   planHash: string;
   stepHash: string;
   minimumAmountCents: number;
+  policyId?: string;
   now?: number;
 }) {
   const { reservationHash, ...base } = input.reservation;
@@ -72,6 +73,7 @@ export function assertBudgetReservation(input: {
     || input.reservation.companyId !== input.scope.companyId
     || input.reservation.planHash !== input.planHash
     || input.reservation.stepHash !== input.stepHash
+    || (input.policyId !== undefined && input.reservation.policyId !== input.policyId)
     || input.reservation.amountCents < input.minimumAmountCents
     || Date.parse(input.reservation.reservedAt) > now
     || Date.parse(input.reservation.expiresAt) <= now

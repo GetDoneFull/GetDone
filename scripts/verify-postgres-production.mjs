@@ -7,7 +7,7 @@ function required(name) {
   return value;
 }
 
-const requiredMigration = "2026-09-25.3";
+const requiredMigration = "2026-09-28.9";
 const maxBackupAgeHours = Number(process.env.GETDONE_BACKUP_MAX_AGE_HOURS || "24");
 if (!Number.isFinite(maxBackupAgeHours) || maxBackupAgeHours <= 0) {
   throw new Error("GETDONE_BACKUP_MAX_AGE_HOURS must be positive");
@@ -104,7 +104,18 @@ try {
     "audit_chain_heads",
     "analytics_ingestion_checkpoints",
     "analytics_ingestion_evidence",
-    "analytics_ingestion_runs"
+    "analytics_ingestion_runs",
+    "orchestration_runs",
+    "orchestration_transition_receipts",
+    "orchestration_checkpoints",
+    "orchestration_worker_dead_letters",
+    "orchestration_context_snapshots",
+    "orchestration_planner_inputs",
+    "orchestration_plan_proposals",
+    "orchestration_validation_artifacts",
+    "orchestration_policy_step_snapshots",
+    "orchestration_policy_evaluations",
+    "orchestration_decision_resume_requests"
   ];
   const rls = await client.query(
     `SELECT required.name, relation.relrowsecurity, relation.relforcerowsecurity
@@ -280,6 +291,442 @@ try {
     throw new Error("Analytics ingestion index verification failed");
   }
 
+  const orchestrationSchema = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM unnest(ARRAY[
+       'orchestration_runs',
+       'orchestration_transition_receipts',
+       'orchestration_checkpoints'
+     ]::text[]) AS required(name)
+     WHERE to_regclass(required.name) IS NOT NULL`
+  );
+  if (orchestrationSchema.rows[0]?.count !== 3) {
+    throw new Error("UFO orchestration persistence schema verification failed");
+  }
+
+  const orchestrationIndexes = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM pg_indexes
+     WHERE schemaname=current_schema()
+       AND indexname IN (
+         'orchestration_runs_scope_idx',
+         'orchestration_runs_source_idx',
+         'orchestration_runs_resumable_idx',
+         'orchestration_transition_receipts_scope_idx',
+         'orchestration_checkpoints_scope_idx'
+       )`
+  );
+  if (orchestrationIndexes.rows[0]?.count !== 5) {
+    throw new Error("UFO orchestration persistence index verification failed");
+  }
+
+  const orchestrationConstraints = await client.query(
+    `SELECT
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_runs'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (portfolio_id, company_id, correlation_id)'
+       )::int AS correlation_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_runs'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (portfolio_id, company_id, start_idempotency_key)'
+       )::int AS start_idempotency_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_transition_receipts'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (run_id, idempotency_key)'
+       )::int AS transition_idempotency_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_transition_receipts'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (run_id, next_version)'
+       )::int AS transition_version_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_checkpoints'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (run_id, run_version)'
+       )::int AS checkpoint_version_unique
+     FROM pg_constraint
+     WHERE conrelid IN (
+       'orchestration_runs'::regclass,
+       'orchestration_transition_receipts'::regclass,
+       'orchestration_checkpoints'::regclass
+     )`
+  );
+  const orchestrationConstraintRow = orchestrationConstraints.rows[0];
+  if (
+    orchestrationConstraintRow?.correlation_unique !== 1
+    || orchestrationConstraintRow?.start_idempotency_unique !== 1
+    || orchestrationConstraintRow?.transition_idempotency_unique !== 1
+    || orchestrationConstraintRow?.transition_version_unique !== 1
+    || orchestrationConstraintRow?.checkpoint_version_unique !== 1
+  ) {
+    throw new Error("UFO orchestration uniqueness/CAS constraints are incomplete");
+  }
+
+  const orchestrationWorkerSchema = await client.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE table_name='orchestration_worker_state')::int AS queue_columns,
+       COUNT(*) FILTER (WHERE table_name='orchestration_worker_instances')::int AS instance_columns,
+       COUNT(*) FILTER (WHERE table_name='orchestration_worker_dead_letters')::int AS dead_letter_columns
+     FROM information_schema.columns
+     WHERE (
+       table_name='orchestration_worker_state'
+       AND column_name IN (
+         'run_id','portfolio_id','company_id','run_state','stage_run_version','stage_attempt',
+         'consecutive_failures','ready_at','lease_id','lease_worker_id',
+         'lease_issued_at','lease_heartbeat_at','lease_expires_at','lease_version',
+         'claimed_run_version','claimed_record_hash','last_error_code',
+         'last_error_message','updated_at'
+       )
+     ) OR (
+       table_name='orchestration_worker_instances'
+       AND column_name IN (
+         'worker_id','status','process_version','started_at','heartbeat_at',
+         'ready_at','stopped_at','metadata','updated_at'
+       )
+     ) OR (
+       table_name='orchestration_worker_dead_letters'
+       AND column_name IN (
+         'id','run_id','portfolio_id','company_id','lease_id','worker_id',
+         'claimed_run_version','claimed_record_hash','terminal_run_version',
+         'terminal_record_hash','attempt','failure_code','failure_message_hash',
+         'dead_lettered_at','recovery_kind','evidence_hash'
+       )
+     )`
+  );
+  if (
+    orchestrationWorkerSchema.rows[0]?.queue_columns !== 19
+    || orchestrationWorkerSchema.rows[0]?.instance_columns !== 9
+    || orchestrationWorkerSchema.rows[0]?.dead_letter_columns !== 16
+  ) {
+    throw new Error("UFO orchestration worker durability schema verification failed");
+  }
+
+  const orchestrationWorkerIndexes = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM pg_indexes
+     WHERE schemaname=current_schema()
+       AND indexname IN (
+         'orchestration_worker_ready_idx',
+         'orchestration_worker_lease_expiry_idx',
+         'orchestration_worker_scope_idx',
+         'orchestration_worker_dispatch_ready_idx',
+         'orchestration_worker_instances_status_idx',
+         'orchestration_worker_dead_letters_scope_idx',
+         'orchestration_worker_dead_letters_run_idx'
+       )`
+  );
+  if (orchestrationWorkerIndexes.rows[0]?.count !== 7) {
+    throw new Error("UFO orchestration worker durability index verification failed");
+  }
+
+  const orchestrationQueueRls = await client.query(
+    `SELECT relrowsecurity,relforcerowsecurity
+     FROM pg_class
+     WHERE oid='orchestration_worker_state'::regclass`
+  );
+  if (
+    orchestrationQueueRls.rows[0]?.relrowsecurity !== false
+    || orchestrationQueueRls.rows[0]?.relforcerowsecurity !== false
+  ) {
+    throw new Error(
+      "Orchestration dispatch queue must remain non-authoritative global routing metadata"
+    );
+  }
+
+  const orchestrationContextSchema = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM information_schema.columns
+     WHERE table_name='orchestration_context_snapshots'
+       AND column_name IN (
+         'id','run_id','portfolio_id','company_id','source_type','source_id',
+         'source_hash','run_version','snapshot_hash','idempotency_key','payload','created_at'
+       )`
+  );
+  if (orchestrationContextSchema.rows[0]?.count !== 12) {
+    throw new Error("OwnerIntent ContextSnapshot schema verification failed");
+  }
+
+  const orchestrationContextIndexes = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM pg_indexes
+     WHERE schemaname=current_schema()
+       AND indexname IN (
+         'orchestration_context_snapshots_scope_idx',
+         'orchestration_context_snapshots_source_idx'
+       )`
+  );
+  if (orchestrationContextIndexes.rows[0]?.count !== 2) {
+    throw new Error("OwnerIntent ContextSnapshot index verification failed");
+  }
+
+  const orchestrationContextConstraints = await client.query(
+    `SELECT
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_context_snapshots'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (run_id, run_version)'
+       )::int AS run_version_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_context_snapshots'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (portfolio_id, company_id, idempotency_key)'
+       )::int AS tenant_idempotency_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_context_snapshots'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (snapshot_hash)'
+       )::int AS snapshot_hash_unique
+     FROM pg_constraint
+     WHERE conrelid='orchestration_context_snapshots'::regclass`
+  );
+  const contextConstraintRow = orchestrationContextConstraints.rows[0];
+  if (
+    contextConstraintRow?.run_version_unique !== 1
+    || contextConstraintRow?.tenant_idempotency_unique !== 1
+    || contextConstraintRow?.snapshot_hash_unique !== 1
+  ) {
+    throw new Error("OwnerIntent ContextSnapshot uniqueness constraints are incomplete");
+  }
+
+  const planningSchema = await client.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE table_name='orchestration_planner_inputs')::int AS planner_input_columns,
+       COUNT(*) FILTER (WHERE table_name='orchestration_plan_proposals')::int AS plan_proposal_columns
+     FROM information_schema.columns
+     WHERE (
+       table_name='orchestration_planner_inputs'
+       AND column_name IN (
+         'id','run_id','portfolio_id','company_id','source_run_version',
+         'context_snapshot_id','context_snapshot_hash','input_hash',
+         'idempotency_key','payload','created_at'
+       )
+     ) OR (
+       table_name='orchestration_plan_proposals'
+       AND column_name IN (
+         'id','run_id','portfolio_id','company_id','planning_run_version',
+         'planner_input_id','planner_input_hash','planner_request_id',
+         'plan_hash','artifact_hash','idempotency_key','payload','created_at'
+       )
+     )`
+  );
+  if (
+    planningSchema.rows[0]?.planner_input_columns !== 11
+    || planningSchema.rows[0]?.plan_proposal_columns !== 13
+  ) {
+    throw new Error("UFO durable planning schema verification failed");
+  }
+
+  const planningIndexes = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM pg_indexes
+     WHERE schemaname=current_schema()
+       AND indexname IN (
+         'orchestration_planner_inputs_scope_idx',
+         'orchestration_planner_inputs_snapshot_idx',
+         'orchestration_plan_proposals_scope_idx',
+         'orchestration_plan_proposals_input_idx'
+       )`
+  );
+  if (planningIndexes.rows[0]?.count !== 4) {
+    throw new Error("UFO durable planning index verification failed");
+  }
+
+  const planningConstraints = await client.query(
+    `SELECT
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_planner_inputs'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (run_id, source_run_version)'
+       )::int AS planner_run_version_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_planner_inputs'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (portfolio_id, company_id, idempotency_key)'
+       )::int AS planner_idempotency_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_plan_proposals'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (run_id, planning_run_version)'
+       )::int AS plan_run_version_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_plan_proposals'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (portfolio_id, company_id, idempotency_key)'
+       )::int AS plan_idempotency_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_plan_proposals'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (portfolio_id, company_id, planner_request_id)'
+       )::int AS planner_request_unique
+     FROM pg_constraint
+     WHERE conrelid IN (
+       'orchestration_planner_inputs'::regclass,
+       'orchestration_plan_proposals'::regclass
+     )`
+  );
+  const planningConstraintRow = planningConstraints.rows[0];
+  if (
+    planningConstraintRow?.planner_run_version_unique !== 1
+    || planningConstraintRow?.planner_idempotency_unique !== 1
+    || planningConstraintRow?.plan_run_version_unique !== 1
+    || planningConstraintRow?.plan_idempotency_unique !== 1
+    || planningConstraintRow?.planner_request_unique !== 1
+  ) {
+    throw new Error("UFO durable planning uniqueness constraints are incomplete");
+  }
+
+  const validationPolicySchema = await client.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE table_name='orchestration_validation_artifacts')::int AS validation_columns,
+       COUNT(*) FILTER (WHERE table_name='orchestration_policy_step_snapshots')::int AS policy_step_columns,
+       COUNT(*) FILTER (WHERE table_name='orchestration_policy_evaluations')::int AS policy_columns
+     FROM information_schema.columns
+     WHERE (
+       table_name='orchestration_validation_artifacts'
+       AND column_name IN (
+         'id','run_id','portfolio_id','company_id','planned_run_version',
+         'plan_artifact_id','plan_artifact_hash','plan_hash',
+         'validation_policy_hash','receipt_hash','validation_status',
+         'artifact_hash','idempotency_key','payload','created_at'
+       )
+     ) OR (
+       table_name='orchestration_policy_step_snapshots'
+       AND column_name IN (
+         'id','run_id','portfolio_id','company_id','validated_run_version',
+         'plan_artifact_id','plan_artifact_hash',
+         'validation_receipt_id','validation_receipt_hash',
+         'step_id','step_hash','snapshot_hash','artifact_hash',
+         'idempotency_key','payload','created_at'
+       )
+     ) OR (
+       table_name='orchestration_policy_evaluations'
+       AND column_name IN (
+         'id','run_id','portfolio_id','company_id','validated_run_version',
+         'plan_artifact_id','plan_artifact_hash','plan_hash',
+         'validation_receipt_id','validation_receipt_hash','aggregate_disposition',
+         'policy_engine_version','policy_rules_hash','artifact_hash',
+         'idempotency_key','payload','created_at'
+       )
+     )`
+  );
+  if (
+    validationPolicySchema.rows[0]?.validation_columns !== 15
+    || validationPolicySchema.rows[0]?.policy_step_columns !== 16
+    || validationPolicySchema.rows[0]?.policy_columns !== 17
+  ) {
+    throw new Error("UFO durable validation/policy schema verification failed");
+  }
+
+  const validationPolicyIndexes = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM pg_indexes
+     WHERE schemaname=current_schema()
+       AND indexname IN (
+         'orchestration_validation_artifacts_scope_idx',
+         'orchestration_validation_artifacts_plan_idx',
+         'orchestration_policy_step_snapshots_scope_idx',
+         'orchestration_policy_step_snapshots_run_idx',
+         'orchestration_policy_evaluations_scope_idx',
+         'orchestration_policy_evaluations_plan_idx',
+         'orchestration_policy_evaluations_validation_idx'
+       )`
+  );
+  if (validationPolicyIndexes.rows[0]?.count !== 7) {
+    throw new Error("UFO durable validation/policy index verification failed");
+  }
+
+  const validationPolicyConstraints = await client.query(
+    `SELECT
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_validation_artifacts'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (run_id, planned_run_version)'
+       )::int AS validation_run_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_validation_artifacts'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (portfolio_id, company_id, idempotency_key)'
+       )::int AS validation_idempotency_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_policy_step_snapshots'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (run_id, validated_run_version, step_id)'
+       )::int AS policy_step_run_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_policy_step_snapshots'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (portfolio_id, company_id, idempotency_key)'
+       )::int AS policy_step_idempotency_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_policy_evaluations'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (run_id, validated_run_version)'
+       )::int AS policy_run_unique,
+       COUNT(*) FILTER (
+         WHERE conrelid='orchestration_policy_evaluations'::regclass
+           AND contype='u'
+           AND pg_get_constraintdef(oid)='UNIQUE (portfolio_id, company_id, idempotency_key)'
+       )::int AS policy_idempotency_unique
+     FROM pg_constraint
+     WHERE conrelid IN (
+       'orchestration_validation_artifacts'::regclass,
+       'orchestration_policy_step_snapshots'::regclass,
+       'orchestration_policy_evaluations'::regclass
+     )`
+  );
+  const validationPolicyConstraintRow = validationPolicyConstraints.rows[0];
+  if (
+    validationPolicyConstraintRow?.validation_run_unique !== 1
+    || validationPolicyConstraintRow?.validation_idempotency_unique !== 1
+    || validationPolicyConstraintRow?.policy_step_run_unique !== 1
+    || validationPolicyConstraintRow?.policy_step_idempotency_unique !== 1
+    || validationPolicyConstraintRow?.policy_run_unique !== 1
+    || validationPolicyConstraintRow?.policy_idempotency_unique !== 1
+  ) {
+    throw new Error("UFO durable validation/policy uniqueness constraints are incomplete");
+  }
+
+  const authorizationResumeSchema = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM information_schema.columns
+     WHERE table_name='orchestration_decision_resume_requests'
+       AND column_name IN (
+         'id','run_id','decision_id','decision_version','portfolio_id',
+         'company_id','resolution','request_hash','status','created_at',
+         'processed_at','payload'
+       )`
+  );
+  if (authorizationResumeSchema.rows[0]?.count !== 12) {
+    throw new Error("UFO durable authorization resume schema verification failed");
+  }
+
+  const authorizationResumeIndexes = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM pg_indexes
+     WHERE schemaname=current_schema()
+       AND indexname IN (
+         'orchestration_decision_resume_scope_idx',
+         'orchestration_decision_resume_pending_idx'
+       )`
+  );
+  if (authorizationResumeIndexes.rows[0]?.count !== 2) {
+    throw new Error("UFO durable authorization resume index verification failed");
+  }
+
+  const authorizationResumeConstraint = await client.query(
+    `SELECT COUNT(*)::int AS count
+     FROM pg_constraint
+     WHERE conrelid='orchestration_decision_resume_requests'::regclass
+       AND contype='u'
+       AND pg_get_constraintdef(oid)='UNIQUE (decision_id, decision_version)'`
+  );
+  if (authorizationResumeConstraint.rows[0]?.count !== 1) {
+    throw new Error("UFO durable authorization resume uniqueness constraint is missing");
+  }
+
   const backup = await client.query(
     `SELECT completed_at,verification_hash
      FROM database_backup_evidence
@@ -345,6 +792,17 @@ try {
     disasterRecoverySchema: "verified",
     releaseGateSchema: "verified",
     analyticsSchema: "verified",
+    orchestrationSchema: "verified",
+    orchestrationCasConstraints: "verified",
+    orchestrationWorkerSchema: "verified",
+    orchestrationContextSchema: "verified",
+    orchestrationContextConstraints: "verified",
+    durablePlanningSchema: "verified",
+    durablePlanningConstraints: "verified",
+    durableValidationPolicySchema: "verified",
+    durableValidationPolicyConstraints: "verified",
+    durableAuthorizationResumeSchema: "verified",
+    durableAuthorizationResumeConstraints: "verified",
     backupFresh: true
   }, null, 2));
 } finally {

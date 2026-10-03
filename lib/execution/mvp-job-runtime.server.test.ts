@@ -97,14 +97,19 @@ describe("MVP capability-dispatched Job runtime", () => {
       jobId: "job-1",
       spec: {
         kind: "business-action",
-        request: { capability: "http.request", correlationId }
+        request: {
+          capability: "http.request",
+          correlationId,
+          idempotencyKey: "job:job-1:side-effect:action-1"
+        }
       }
     });
     expect(enqueued[0]).toMatchObject({
       correlationId,
       jobId: "job-1",
       taskId: "task-1",
-      authorizationConsumptionHash: "consumption-hash"
+      authorizationConsumptionHash: "consumption-hash",
+      idempotencyKey: "queue:job:job-1:side-effect:action-1"
     });
   });
 
@@ -127,14 +132,14 @@ describe("MVP capability-dispatched Job runtime", () => {
     const runtime = new MvpJobRuntime({
       status: async () => ({
         runtime: {
-          state: "succeeded",
+          state: "released",
           envelope: { correlationId }
         },
         outcomes: [{
           id: "outcome-1",
           jobId: "job-1",
-          kind: "succeeded",
-          runtimeState: "succeeded",
+          kind: "verified",
+          runtimeState: "released",
           attempt: 1,
           occurredAt: "2026-09-22T12:00:00Z",
           transactionHash: "transaction-hash",
@@ -152,6 +157,33 @@ describe("MVP capability-dispatched Job runtime", () => {
       destination: "/?focus=task-result&id=task-1",
       requiresAuthoritativeFetch: true
     });
+  });
+
+  it("does not notify the owner when execution only reached provider completion", async () => {
+    const runtime = new MvpJobRuntime({
+      status: async () => ({
+        runtime: {
+          state: "released",
+          envelope: { correlationId }
+        },
+        outcomes: [{
+          id: "outcome-provider",
+          jobId: "job-1",
+          kind: "provider-completed",
+          runtimeState: "released",
+          attempt: 1,
+          occurredAt: "2026-09-22T12:00:00Z",
+          transactionHash: "provider-transaction",
+          recordHash: "provider-outcome-hash"
+        }],
+        events: []
+      })
+    } as unknown as ConstructorParameters<typeof MvpJobRuntime>[0],
+    {} as unknown as ConstructorParameters<typeof MvpJobRuntime>[1],
+    {} as unknown as ConstructorParameters<typeof MvpJobRuntime>[2],
+    jobs as ConstructorParameters<typeof MvpJobRuntime>[3]);
+
+    expect((await runtime.ownerView("job-1", "task-1")).notification).toBeNull();
   });
 
   it("protects the internal worker trigger with constant-time bearer authentication", () => {

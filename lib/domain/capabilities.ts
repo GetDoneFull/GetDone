@@ -176,7 +176,7 @@ export const capabilityRegistry: readonly CapabilityDefinition[] = [
     reversible: true,
     risk: "medium",
     blastRadius: "single-object",
-    approval: "approval",
+    approval: "auto",
     adapterBinding: "business.github",
     rateLimitPerMinute: 30,
     enabled: true,
@@ -195,7 +195,7 @@ export const capabilityRegistry: readonly CapabilityDefinition[] = [
     reversible: true,
     risk: "high",
     blastRadius: "single-object",
-    approval: "approval",
+    approval: "auto",
     adapterBinding: "business.github",
     rateLimitPerMinute: 30,
     enabled: true,
@@ -328,7 +328,7 @@ export const capabilityRegistry: readonly CapabilityDefinition[] = [
     reversible: true,
     risk: "critical",
     blastRadius: "company",
-    approval: "strong-approval",
+    approval: "approval",
     adapterBinding: "software.deploy",
     rateLimitPerMinute: 5,
     enabled: true,
@@ -492,7 +492,7 @@ export const capabilityRegistry: readonly CapabilityDefinition[] = [
   }
 ];
 
-export const CAPABILITY_REGISTRY_VERSION = "2026-09-25.4";
+export const CAPABILITY_REGISTRY_VERSION = "2026-09-28.1";
 
 function stableRegistryManifest() {
   return capabilityRegistry.map((capability) => ({

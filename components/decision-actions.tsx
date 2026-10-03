@@ -55,10 +55,12 @@ async function performPasskeyStepUp() {
 
 export function DecisionActions({
   decisionId,
-  initialStatus
+  initialStatus,
+  approveLabel = "Approve"
 }: {
   decisionId: string;
   initialStatus: DecisionStatus;
+  approveLabel?: string;
 }) {
   const router = useRouter();
   const [status, setStatus] = useState<DecisionStatus>(initialStatus);
@@ -137,7 +139,7 @@ export function DecisionActions({
       <div className="action-grid">
         <button type="button" className="secondary-action" disabled={submitting} onClick={() => mutate("reject")}>Reject</button>
         <button type="button" className="secondary-action" disabled={submitting} onClick={() => mutate("modify")}>Modify</button>
-        <button type="button" className="primary-action" disabled={submitting} onClick={() => mutate("approve")}>Approve</button>
+        <button type="button" className="primary-action" disabled={submitting} onClick={() => mutate("approve")}>{approveLabel}</button>
       </div>
     </div>
   );

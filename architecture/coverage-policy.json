@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.6.0",
+  "schemaVersion": "2.3.0",
   "thresholds": {
     "coveredModulePercent": 100,
     "minimumTotalTestCases": 80,
@@ -384,6 +384,91 @@
     {
       "source": "lib/persistence/postgres/disaster-recovery-store.ts",
       "test": "lib/persistence/postgres/disaster-recovery-store.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/orchestration/contracts.ts",
+      "test": "lib/orchestration/contracts.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/persistence/postgres/orchestration-store.ts",
+      "test": "lib/persistence/postgres/orchestration-store.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/orchestration/worker-contracts.ts",
+      "test": "lib/orchestration/worker-contracts.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/orchestration/worker-runtime.ts",
+      "test": "lib/orchestration/worker-runtime.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/persistence/postgres/orchestration-worker-store.ts",
+      "test": "lib/persistence/postgres/orchestration-worker-store.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/orchestration/owner-intent-flow.ts",
+      "test": "lib/orchestration/owner-intent-flow.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/persistence/postgres/orchestration-context-snapshot-store.ts",
+      "test": "lib/persistence/postgres/orchestration-context-snapshot-store.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/orchestration/planning-flow.ts",
+      "test": "lib/orchestration/planning-flow.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/persistence/postgres/orchestration-planning-stores.ts",
+      "test": "lib/persistence/postgres/orchestration-planning-stores.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/orchestration/ai-gateway-planner.ts",
+      "test": "lib/orchestration/ai-gateway-planner.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/orchestration/validation-policy-flow.ts",
+      "test": "lib/orchestration/validation-policy-flow.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/persistence/postgres/orchestration-validation-policy-stores.ts",
+      "test": "lib/persistence/postgres/orchestration-validation-policy-stores.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/orchestration/authorization-flow.ts",
+      "test": "lib/orchestration/authorization-flow.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/persistence/postgres/orchestration-authorization-stores.ts",
+      "test": "lib/persistence/postgres/orchestration-authorization-stores.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/domain/objective-inbox.ts",
+      "test": "lib/domain/objective-inbox.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/explainability/job-owner-explanation.ts",
+      "test": "lib/explainability/job-owner-explanation.test.ts",
+      "critical": true
+    },
+    {
+      "source": "lib/domain/learned-rules.ts",
+      "test": "lib/domain/learned-rules.test.ts",
       "critical": true
     }
   ]

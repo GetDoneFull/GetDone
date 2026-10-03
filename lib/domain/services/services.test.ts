@@ -393,25 +393,38 @@ describe("transactional domain services", () => {
     await expect(
       jobService.start(base.id, command("job.start.missing"), "missing-start-fact")
     ).rejects.toThrow(/verified-start fact/i);
-    expect((
-      await jobService.start(
-        base.id,
-        command("job.start"),
-        bridgeFacts.startFact.id
-      )
-    ).state).toBe("running");
-    await jobService.beginVerification(
+    const executing = await jobService.start(
       base.id,
-      command("job.verify.begin"),
-      bridgeFacts.completionFact.id
+      command("job.start"),
+      bridgeFacts.startFact.id
     );
-    const succeeded = await jobService.succeed(
+    expect(executing.state).toBe("executing");
+
+    const providerCompleted = await jobService.recordProviderCompletion(
       base.id,
-      command("job.succeed"),
+      command("job.provider-completed"),
+      {
+        providerResultId: "provider-operation-1",
+        providerResultHash: bridgeFacts.completionFact.factHash,
+        completedAt: "2026-09-20T22:02:03Z",
+        verifiedCompletionFactId: bridgeFacts.completionFact.id
+      }
+    );
+    expect(providerCompleted.state).toBe("provider_completed");
+
+    expect((
+      await jobService.beginVerification(
+        base.id,
+        command("job.verify.begin")
+      )
+    ).state).toBe("verifying");
+    const verified = await jobService.verify(
+      base.id,
+      command("job.verified"),
       verifiedJobReceipt.id
     );
-    expect(succeeded.state).toBe("succeeded");
-    expect(succeeded.verificationReceiptHash).toBe(verifiedJobReceipt.receiptHash);
+    expect(verified.state).toBe("verified");
+    expect(verified.verificationReceiptHash).toBe(verifiedJobReceipt.receiptHash);
   });
 
   it("does not verify an outcome from a non-authoritative or uncertain receipt", async () => {

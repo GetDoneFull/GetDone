@@ -9,7 +9,7 @@ export default async function DecisionsPage() {
   const repository = await getOwnerReadRepository();
   const decisions = await repository.listDecisions();
   const attention = decisions.filter(
-    (decision) => decision.priority === "high" && decision.status === "pending"
+    (decision) => decision.priority !== "fyi" && decision.status === "pending"
   ).length;
 
   return (
@@ -17,7 +17,7 @@ export default async function DecisionsPage() {
       <AppHeader />
       <section className="ufo-page ufo-decisions-page">
         <div className="ufo-page-title">
-          <h1>Decisions {attention > 0 ? <span>{attention}</span> : null}</h1>
+          <h1>Decision Center {attention > 0 ? <span>{attention}</span> : null}</h1>
           <p>Only what needs your attention.</p>
         </div>
         <DecisionSpotlight decisions={[...decisions]} />

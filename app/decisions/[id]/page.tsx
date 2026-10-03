@@ -23,8 +23,18 @@ export default async function DecisionDetailPage({ params }: { params: Promise<{
         <h1>{decision.title}</h1>
         <p className="lead">{decision.subtitle}</p>
         <article className="detail-card"><span>Why this is here</span><p>{decision.rationale}</p></article>
-        <article className="detail-card"><span>Expected impact</span><ul>{decision.impact.map((item) => <li key={item}>{item}</li>)}</ul></article>
-        <DecisionActions decisionId={decision.id} initialStatus={decision.status} />
+        <article className="detail-card">
+          <span>Verified context</span>
+          <ul>{(decision.evidence?.length ? decision.evidence : decision.impact).map((item) => <li key={item}>{item}</li>)}</ul>
+        </article>
+        {decision.blastRadius ? (
+          <article className="detail-card"><span>Blast radius</span><p>{decision.blastRadius}</p></article>
+        ) : null}
+        <DecisionActions
+          decisionId={decision.id}
+          initialStatus={decision.status}
+          approveLabel={decision.actionLabel ?? "Approve"}
+        />
       </section>
     </AppShell>
   );

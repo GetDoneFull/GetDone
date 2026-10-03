@@ -16,6 +16,9 @@ import {
   handleListVerifications,
   handleMutateDecision,
   handleOwnerIntent,
+  handleSubmitObjectives,
+  handleListObjectives,
+  handleGetObjective,
   handleStartResourceEnrollment,
   handleLogout,
   handleRevokeOtherSessions,
@@ -36,6 +39,31 @@ const principal: ControlApiPrincipal = {
   },
   sessionId: "session-a",
   role: "owner"
+};
+
+const objective = {
+  id: "objective-1",
+  objectiveId: "objective-1",
+  correlationId: "corr-objective",
+  portfolioId: "portfolio-a",
+  companyId: "company-a",
+  environment: "development" as const,
+  createdByUserId: "user-a",
+  source: "free_text" as const,
+  rawText: "Fix onboarding",
+  normalizedGoal: "Fix onboarding",
+  desiredOutcome: "Fix onboarding",
+  constraints: [],
+  priority: "normal" as const,
+  successCriteria: [],
+  riskLevel: "low" as const,
+  status: "queued" as const,
+  relationship: "independent" as const,
+  dependsOnObjectiveIds: [],
+  progress: [],
+  createdAt: "2026-09-21T04:00:00Z",
+  updatedAt: "2026-09-21T04:00:00Z",
+  version: 1
 };
 
 const decision = {
@@ -162,6 +190,14 @@ function fakeAdapter(): ControlApiApplicationAdapter {
       status: "accepted",
       receivedAt: "2026-09-21T04:00:00Z"
     }),
+    submitObjectives: async (_principal, input) => [{
+      ...objective,
+      rawText: input.rawText,
+      normalizedGoal: input.rawText.split(".")[0],
+      desiredOutcome: input.rawText.split(".")[0]
+    }],
+    listObjectives: async () => [objective],
+    getObjective: async (_principal, id) => id === objective.id ? objective : null,
     listDecisions: async () => [decision],
     getDecision: async (_principal, id) => id === decision.id ? decision : null,
     mutateDecision: async (_principal, input) => ({
@@ -191,7 +227,18 @@ function fakeAdapter(): ControlApiApplicationAdapter {
       state: job.state,
       verificationEvidenceIds: job.verificationEvidenceIds,
       verificationReceiptId: job.verificationReceiptId,
-      verificationReceiptHash: job.verificationReceiptHash
+      verificationReceiptHash: job.verificationReceiptHash,
+      explanation: {
+        title: "Completed and verified",
+        summary: "GetDone verified the intended outcome before marking this job successful.",
+        reasons: ["Verification passed with 1 evidence item(s)."],
+        authority: { capabilityNames: [] },
+        verification: {
+          status: "verified",
+          evidenceCount: 1,
+          receiptId: job.verificationReceiptId
+        }
+      }
     } : null,
     listVerifications: async () => [verification],
     getVerification: async (_principal, id) => id === verification.id ? verification : null
@@ -481,6 +528,50 @@ describe("Control API HTTP surface", () => {
       "enrollment-1"
     );
     expect(await json(advanced)).toMatchObject({ ok: true, data: { state: "create-enrollment" } });
+  });
+
+  it("accepts and reads owner-facing Objectives through the Control API", async () => {
+    const created = await handleSubmitObjectives(new Request(
+      "http://localhost/api/control/objectives",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "objective-key-1"
+        },
+        body: JSON.stringify({
+          rawText: "Fix onboarding. Deploy staging automatically. Ask me before production."
+        })
+      }
+    ));
+    expect(created.status).toBe(201);
+    expect(await json(created)).toMatchObject({
+      ok: true,
+      data: [{ objectiveId: "objective-1", normalizedGoal: "Fix onboarding" }]
+    });
+
+    const list = await handleListObjectives(
+      new Request("http://localhost/api/control/objectives")
+    );
+    expect(await json(list)).toMatchObject({
+      ok: true,
+      data: [{ id: "objective-1" }]
+    });
+
+    const one = await handleGetObjective(
+      new Request("http://localhost/api/control/objectives/objective-1"),
+      "objective-1"
+    );
+    expect(await json(one)).toMatchObject({
+      ok: true,
+      data: { normalizedGoal: "Fix onboarding" }
+    });
+
+    const missing = await handleGetObjective(
+      new Request("http://localhost/api/control/objectives/missing"),
+      "missing"
+    );
+    expect(missing.status).toBe(404);
   });
 
   it("exposes Jobs, verified result views, and Verification reads", async () => {

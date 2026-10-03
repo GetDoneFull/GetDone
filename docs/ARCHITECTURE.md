@@ -8,7 +8,7 @@ GetDone remains a single Next.js TypeScript repository while the deterministic c
 
 The permanent owner navigation is intentionally fixed at:
 
-**Chat · Decisions · Resources**
+**Home · Decisions · Resources**
 
 Backend/resource complexity must not turn the product into an infrastructure admin console.
 
@@ -146,7 +146,7 @@ Development seed data is confined to the development read-repository seam and fa
 
 `npm run verify:architecture` protects high-value invariants, including:
 
-- permanent Chat / Decisions / Resources navigation;
+- permanent Home / Decisions / Resources navigation, with Home serving as the Objective Inbox;
 - the authority rule in README;
 - provider/model SDK isolation behind `lib/ai-gateway`;
 - no secret-like `NEXT_PUBLIC_*` variables;

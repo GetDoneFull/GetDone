@@ -226,7 +226,7 @@ describeIntegration("durable worker PostgreSQL multi-worker acceptance", () => {
         execute: async (context: { heartbeat(): Promise<void> }) => {
           executions += 1;
           await context.heartbeat();
-          return { kind: "succeeded" as const };
+          return { kind: "provider-completed" as const };
         }
       };
 
@@ -295,7 +295,7 @@ describeIntegration("durable worker PostgreSQL multi-worker acceptance", () => {
       ).runOnce({
         execute: async () => {
           sideEffects += 1;
-          return { kind: "succeeded" };
+          return { kind: "provider-completed" };
         }
       });
       expect(result).toHaveLength(1);
@@ -385,9 +385,9 @@ describeIntegration("durable worker PostgreSQL multi-worker acceptance", () => {
         "2026-09-22T07:02:02.000Z",
         3
       ).runOnce({
-        execute: async () => ({ kind: "succeeded" })
+        execute: async () => ({ kind: "provider-completed" })
       });
-      expect(second[0]?.outcome.kind).toBe("succeeded");
+      expect(second[0]?.outcome.kind).toBe("provider-completed");
 
       await storeA.enqueue(envelope("job-max-attempts", "2026-09-22T07:03:00.000Z"));
       await worker(
@@ -434,7 +434,7 @@ describeIntegration("durable worker PostgreSQL multi-worker acceptance", () => {
             expectedJobHash: context.runtimeHash(),
             idempotencyKey: "cancel:race"
           });
-          return { kind: "succeeded" };
+          return { kind: "provider-completed" };
         }
       });
       expect(result[0]?.outcome).toEqual({
@@ -468,9 +468,9 @@ describeIntegration("durable worker PostgreSQL multi-worker acceptance", () => {
         "worker-after-web-restart",
         "2026-09-22T07:05:01.000Z"
       ).runOnce({
-        execute: async () => ({ kind: "succeeded" })
+        execute: async () => ({ kind: "provider-completed" })
       });
-      expect(result[0]?.outcome.kind).toBe("succeeded");
+      expect(result[0]?.outcome.kind).toBe("provider-completed");
 
       const client = await afterRestart.pool.connect();
       try {

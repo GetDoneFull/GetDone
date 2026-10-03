@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
@@ -68,14 +69,58 @@ export default async function JobResultPage({
         </article>
         <article className="detail-card">
           <span>Status</span>
-          <p role="status"><strong>{result.state}</strong></p>
+          <p role="status"><strong>{result.explanation.title}</strong></p>
+          <p>{result.explanation.summary}</p>
+        </article>
+        {result.failure ? (
+          <article className="detail-card" role="alert" data-testid="job-owner-failure">
+            <span>What happened</span>
+            <p><strong>{result.failure.title}</strong></p>
+            <p>{result.failure.summary}</p>
+            <p>{result.failure.safetyMessage}</p>
+            {result.failure.action ? (
+              <p>
+                <Link href={result.failure.action.href}>{result.failure.action.label}</Link>
+              </p>
+            ) : null}
+          </article>
+        ) : null}
+        <article className="detail-card">
+          <span>Why did this happen?</span>
+          {result.explanation.reasons.length > 0 ? (
+            <ul>
+              {result.explanation.reasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          ) : (
+            <p>No additional explanation is required for this state.</p>
+          )}
+        </article>
+        <article className="detail-card">
+          <span>Policy authority</span>
+          <p>
+            {result.explanation.authority.disposition
+              ? `${result.explanation.authority.disposition} · ${result.explanation.authority.capabilityNames.join(", ") || "No capability recorded"}`
+              : "No execution authorization has been consumed yet."}
+          </p>
+          {result.explanation.authority.policyVersion ? (
+            <p>Policy version: {result.explanation.authority.policyVersion}</p>
+          ) : null}
+          {result.explanation.authority.policyRulesHash ? (
+            <p>Rules hash: {result.explanation.authority.policyRulesHash}</p>
+          ) : null}
         </article>
         <article className="detail-card">
           <span>Verification</span>
           <p>
-            {result.verificationReceiptId
-              ? `Verified · ${result.verificationEvidenceIds.length} evidence item(s)`
-              : "No authoritative verification receipt"}
+            {result.explanation.verification.status === "verified"
+              ? `Verified · ${result.explanation.verification.evidenceCount} evidence item(s)`
+              : result.explanation.verification.status === "pending"
+                ? "Verification is in progress. Success has not been claimed."
+                : result.explanation.verification.status === "unverified"
+                  ? "No authoritative verified-success result."
+                  : "Verification has not started."}
           </p>
         </article>
         <article className="detail-card">
